@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 
-from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtCore import QPoint, Qt, QUrl
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -35,6 +39,7 @@ class MainWindow(QMainWindow):
         self.tree = QTreeView()
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_context_menu)
+        self.tree.doubleClicked.connect(self.on_tree_double_clicked)
 
         self.name_label = QLabel("name: -")
         self.type_label = QLabel("type: -")
@@ -92,22 +97,94 @@ class MainWindow(QMainWindow):
         self.type_label.setText(f"type: {node.type}")
         self.target_label.setText(f"target: {node.target}")
 
+    def can_launch_node(self, node: Node | None) -> bool:
+        return isinstance(node, Node) and node.type in {"path", "url"} and bool(node.target.strip())
+
+    def on_tree_double_clicked(self, index):
+        item = self.model.itemFromIndex(index)
+        node = item.data(NODE_ROLE) if item is not None else None
+        if self.can_launch_node(node):
+            self.safe_call(self.launch_node, node)
+
     def show_context_menu(self, pos: QPoint):
         self.safe_call(self._show_context_menu, pos)
 
     def _show_context_menu(self, pos: QPoint):
+        click_index = self.tree.indexAt(pos)
+        if click_index.isValid():
+            self.tree.setCurrentIndex(click_index)
+
+        _, node = self.current_item_and_node()
+        launchable = self.can_launch_node(node)
+
         menu = QMenu(self)
+        launch = menu.addAction("Launch")
+        launch.setEnabled(launchable)
+
+        copy_target = menu.addAction("Copy target")
+        copy_target.setEnabled(launchable)
+
+        menu.addSeparator()
         add_group = menu.addAction("Add Group")
         rename = menu.addAction("Rename")
         delete = menu.addAction("Delete")
 
         action = menu.exec(self.tree.viewport().mapToGlobal(pos))
-        if action == add_group:
+        if action == launch:
+            self.safe_call(self.launch_current)
+        elif action == copy_target:
+            self.safe_call(self.copy_current_target)
+        elif action == add_group:
             self.safe_call(self.add_group)
         elif action == rename:
             self.safe_call(self.rename_node)
         elif action == delete:
             self.safe_call(self.delete_node)
+
+    def launch_current(self):
+        _, node = self.current_item_and_node()
+        if self.can_launch_node(node):
+            self.launch_node(node)
+
+    def copy_current_target(self):
+        _, node = self.current_item_and_node()
+        if not self.can_launch_node(node):
+            return
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(node.target)
+
+    def launch_node(self, node: Node):
+        if node.type == "path":
+            self._launch_path(node)
+        elif node.type == "url":
+            self._launch_url(node)
+
+    def _launch_path(self, node: Node):
+        target = Path(node.target)
+        if not target.exists():
+            raise FileNotFoundError(f"Path not found: {node.target}")
+
+        starter = getattr(os, "startfile", None)
+        if starter is None:
+            raise RuntimeError("os.startfile is unavailable on this platform")
+
+        try:
+            starter(str(target))
+            logging.info("Launched path target: %s", target)
+        except Exception:
+            logging.exception("Failed launching path target: %s", target)
+            raise
+
+    def _launch_url(self, node: Node):
+        url = QUrl(node.target)
+        if not url.isValid() or not url.scheme():
+            raise ValueError(f"Invalid URL: {node.target}")
+
+        ok = QDesktopServices.openUrl(url)
+        if not ok:
+            raise RuntimeError(f"Failed to open URL: {node.target}")
+        logging.info("Launched URL target: %s", node.target)
 
     def _parent_for_new_group(self, node: Node, item) -> Node:
         if node.type == "group":
