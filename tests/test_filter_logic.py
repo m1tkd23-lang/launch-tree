@@ -3,7 +3,7 @@ from launch_tree.filter_logic import compute_visible_node_ids, node_matches_quer
 
 
 def _tree() -> Node:
-    group = Node(id="g", name="Work", type="group", target="", children=[])
+    group = Node(id="g", name="CAM", type="group", target="", children=[])
     item_path = Node(id="p", name="Readme", type="path", target="C:/docs/readme.txt", children=[])
     item_url = Node(id="u", name="Portal", type="url", target="https://example.com", children=[])
     sep = Node(id="s", name="----------", type="separator", target="", children=[])
@@ -24,6 +24,13 @@ def test_parent_group_visible_when_descendant_matches():
     assert "p" in visible
     assert "g" in visible
     assert "root" in visible
+
+
+def test_matching_group_makes_all_descendants_visible():
+    root = _tree()
+    visible = compute_visible_node_ids(root, "cam")
+
+    assert visible == {"root", "g", "p", "u", "s"}
 
 
 def test_clear_query_shows_all_nodes():
