@@ -6,7 +6,7 @@ import logging
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import QModelIndex, QPoint, Qt, QUrl
+from PyQt6.QtCore import QModelIndex, QPoint, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QDropEvent, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .domain import Node, insert_relative_to_selection, move_node
+from .edit_logic import ALLOWED_NODE_TYPES, apply_node_update
 from .model_filter import TreeFilterProxyModel
 from .model_qt import LauncherTreeModel, NODE_ROLE
 from .storage_json import JsonStorage
@@ -47,6 +48,18 @@ class DragDropTreeView(QTreeView):
             event.acceptProposedAction()
         else:
             event.ignore()
+
+
+class EditableValueLabel(QLabel):
+    double_clicked = pyqtSignal(str)
+
+    def __init__(self, field_name: str, text: str = ""):
+        super().__init__(text)
+        self.field_name = field_name
+
+    def mouseDoubleClickEvent(self, event):
+        self.double_clicked.emit(self.field_name)
+        super().mouseDoubleClickEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -92,15 +105,31 @@ class MainWindow(QMainWindow):
         card_layout.setSpacing(10)
 
         title = QLabel("Details", objectName="detailTitle")
-        self.name_label = QLabel("name: -", objectName="detailValue")
-        self.type_label = QLabel("type: -", objectName="detailValue")
-        self.target_label = QLabel("target: -", objectName="detailValue")
-        self.target_label.setWordWrap(True)
+
+        name_key = QLabel("name", objectName="detailTitle")
+        self.name_value = EditableValueLabel("name", "-")
+        self.name_value.setObjectName("detailValue")
+
+        type_key = QLabel("type", objectName="detailTitle")
+        self.type_value = EditableValueLabel("type", "-")
+        self.type_value.setObjectName("detailValue")
+
+        target_key = QLabel("target", objectName="detailTitle")
+        self.target_value = EditableValueLabel("target", "-")
+        self.target_value.setObjectName("detailValue")
+        self.target_value.setWordWrap(True)
+
+        self.name_value.double_clicked.connect(lambda field: self.safe_call(self.edit_detail_field, field))
+        self.type_value.double_clicked.connect(lambda field: self.safe_call(self.edit_detail_field, field))
+        self.target_value.double_clicked.connect(lambda field: self.safe_call(self.edit_detail_field, field))
 
         card_layout.addWidget(title)
-        card_layout.addWidget(self.name_label)
-        card_layout.addWidget(self.type_label)
-        card_layout.addWidget(self.target_label)
+        card_layout.addWidget(name_key)
+        card_layout.addWidget(self.name_value)
+        card_layout.addWidget(type_key)
+        card_layout.addWidget(self.type_value)
+        card_layout.addWidget(target_key)
+        card_layout.addWidget(self.target_value)
 
         detail_layout.addWidget(detail_card)
         detail_layout.addStretch(1)
@@ -173,19 +202,109 @@ class MainWindow(QMainWindow):
         _, node = self.current_item_and_node()
         return node.id if isinstance(node, Node) else None
 
+    def edit_detail_field(self, field_name: str) -> None:
+        _, node = self.current_item_and_node()
+        if node is None:
+            return
+
+        if field_name == "name":
+            value, ok = QInputDialog.getText(self, "Edit name", "name:", text=node.name)
+            if not ok:
+                return
+            self.apply_detail_update(node, new_name=value)
+            return
+
+        if field_name == "type":
+            options = sorted(ALLOWED_NODE_TYPES)
+            current_index = options.index(node.type) if node.type in options else 0
+            new_type, ok = QInputDialog.getItem(self, "Edit type", "type:", options, current_index, False)
+            if not ok:
+                return
+
+            target_candidate = node.target
+            if new_type in {"path", "url"} and not target_candidate.strip():
+                target_candidate, ok_target = QInputDialog.getText(self, "Target required", "target:", text=target_candidate)
+                if not ok_target:
+                    return
+
+            if new_type == "url" and target_candidate.strip() and not target_candidate.startswith(("http://", "https://")):
+                res = QMessageBox.question(
+                    self,
+                    "URL scheme warning",
+                    "URL は http/https を推奨します。続行しますか？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if res != QMessageBox.StandardButton.Yes:
+                    return
+
+            self.apply_detail_update(node, new_type=new_type, new_target=target_candidate)
+            return
+
+        if field_name == "target":
+            if node.type in {"group", "separator"}:
+                QMessageBox.information(self, "Target disabled", "group/separator の target は編集できません。")
+                return
+
+            value, ok = QInputDialog.getText(self, "Edit target", "target:", text=node.target)
+            if not ok:
+                return
+
+            if node.type == "url" and value.strip() and not value.startswith(("http://", "https://")):
+                res = QMessageBox.question(
+                    self,
+                    "URL scheme warning",
+                    "URL は http/https を推奨します。続行しますか？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if res != QMessageBox.StandardButton.Yes:
+                    return
+
+            self.apply_detail_update(node, new_target=value)
+
+    def apply_detail_update(
+        self,
+        node: Node,
+        *,
+        new_name: str | None = None,
+        new_type: str | None = None,
+        new_target: str | None = None,
+    ) -> bool:
+        ok, error = apply_node_update(node, new_name=new_name, new_type=new_type, new_target=new_target)
+        if not ok:
+            QMessageBox.warning(self, "Validation Error", error or "Invalid input")
+            return False
+
+        self.source_model.rebuild()
+        self.proxy_model.set_query(self.search_box.text())
+        self.persist()
+        logging.info("Updated node id=%s name=%s type=%s target=%s", node.id, node.name, node.type, node.target)
+        self.update_detail()
+        return True
+
     def update_detail(self, *_):
         _, node = self.current_item_and_node()
         if node is None:
-            self.name_label.setText("name: -")
-            self.type_label.setText("type: -")
-            self.target_label.setText("target: -")
+            self.name_value.setText("-")
+            self.type_value.setText("-")
+            self.target_value.setText("-")
+            self.name_value.setEnabled(False)
+            self.type_value.setEnabled(False)
+            self.target_value.setEnabled(False)
             self.launch_button.setEnabled(False)
             self.copy_target_button.setEnabled(False)
             return
 
-        self.name_label.setText(f"name: {node.name}")
-        self.type_label.setText(f"type: {node.type}")
-        self.target_label.setText(f"target: {node.target}")
+        self.name_value.setText(node.name)
+        self.type_value.setText(node.type)
+        if node.type in {"group", "separator"}:
+            self.target_value.setText("(disabled)")
+            self.target_value.setEnabled(False)
+        else:
+            self.target_value.setText(node.target)
+            self.target_value.setEnabled(True)
+
+        self.name_value.setEnabled(True)
+        self.type_value.setEnabled(True)
 
         launchable = self.can_launch_node(node)
         self.launch_button.setEnabled(launchable)

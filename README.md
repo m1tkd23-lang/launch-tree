@@ -75,3 +75,16 @@ python apps/main.py  # apps/main.py が <repo>/src を sys.path に追加して�
 - 入力は `textChanged` で即時反映、`Esc` でクリア
 - 検索中は結果が見えるように必要な枝を自動展開
 - 検索クリア時はツリーを折りたたみ状態へ戻す
+
+
+## Detailsダブルクリック編集（v1-8）
+
+- 右ペイン Details の値（`name` / `type` / `target`）はダブルクリックで編集可能
+- `type` は `group/path/url/separator` から選択
+- 制約:
+  - `name` は空文字不可
+  - 子を持つ `group` を `group` 以外へ変更するのは禁止
+  - `group/separator` に変更した場合は `target` を空にする
+  - `path/url` は `target` 必須
+  - `target` は `group/separator` では編集不可
+- 編集確定後はツリー表示・内部データに反映し、`data/launcher.json` と `.bak` へ保存
