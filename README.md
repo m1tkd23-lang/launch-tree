@@ -1,33 +1,29 @@
-﻿# Project Template (Python)
+# launch-tree
 
-## 新規プロジェクト開始手順
+PyQt6 で動作するランチャーツリー管理アプリ（v1 骨格）です。
 
-1. 本テンプレをコピーして新しいGitHubリポジトリを作成する
-2. 作成したリポジトリを repos 配下に clone
-3. このテンプレの中身を clone 先にコピー
-4. launch_tree を実際の名前に置換
-5. 最初の commit を行う
+## セットアップ（venv 作成〜起動）
 
-## 開発ルール
-- Git操作は repos 配下のみ
-- .env は GitHub に上げない
-- 作業開始時は git pull
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\\Scripts\\Activate.ps1
+pip install -r requirements.txt
+python apps/main.py
+```
 
-## 実行方法
-```powershell
-.\.venv\Scripts\Activate.ps1
-python .\apps\main.py
+## 動作確認手順
 
+1. アプリを起動し、左ペインのツリーと右ペインの詳細（name/type/target）が表示されることを確認
+2. ツリーを右クリックして `Add Group` でグループ追加
+3. 右クリック `Rename` で名前変更
+4. 右クリック `Delete` で確認ダイアログ後に削除
+5. 操作ごとに `data/launcher.json` と `data/launcher.json.bak` の更新を確認
+6. ログが `logs/app.log` に出力されることを確認
 
+## 初期データ
 
----
+`data/launcher.json` に既定の初期データを配置しています（同内容を `data/launcher.json.bak` にも保持）。
 
-
-## 使い方まとめ（超重要）
-- テンプレは **コピーされる側**
-- 実プロジェクトは **最初からGitにつながる側**
-- 作業は clone 後にしか始めない
-
-
-このテンプレは必要に応じて拡張してよいが、
-**構造の意味（役割分離）は崩さないこと**。
+- root(group)
+  - Development(group)
+    - Project Docs(item, target: URL)

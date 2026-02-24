@@ -1,0 +1,23 @@
+{
+  "id": "root",
+  "name": "Root",
+  "type": "group",
+  "target": "",
+  "children": [
+    {
+      "id": "group-dev",
+      "name": "Development",
+      "type": "group",
+      "target": "",
+      "children": [
+        {
+          "id": "item-docs",
+          "name": "Project Docs",
+          "type": "item",
+          "target": "https://example.com/docs",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
