@@ -6,8 +6,8 @@ import logging
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtGui import QDesktopServices, QDropEvent, QUrl
+from PyQt6.QtCore import QPoint, Qt, QUrl
+from PyQt6.QtGui import QDesktopServices, QDropEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
