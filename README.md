@@ -46,3 +46,17 @@ python apps/main.py  # apps/main.py が <repo>/src を sys.path に追加して�
 - 自分自身・子孫配下へのドロップは禁止（循環防止）
 - `group` 以外は子を持てないため、移動先 parent は常に `group` に制限
 - DnD後は `data/launcher.json` と `data/launcher.json.bak` に保存され、再起動後も反映
+
+
+## ターゲット登録（v1-4）
+
+- 右クリックから次を追加可能:
+  - `Add Path Item (File)...`
+  - `Add Path Item (Folder)...`
+  - `Add URL Item...`
+  - `Add Separator`
+- 挿入ルール:
+  - 選択が `group` の場合は子として追加
+  - 選択が `item/separator` の場合は同階層の直後に追加
+  - 未選択の場合は root 直下に追加
+- 追加後は `data/launcher.json` と `data/launcher.json.bak` に保存され、再起動後も保持

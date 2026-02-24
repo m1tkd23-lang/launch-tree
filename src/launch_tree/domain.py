@@ -71,6 +71,32 @@ def contains_node_id(node: Node, node_id: str) -> bool:
     return any(contains_node_id(child, node_id) for child in node.children)
 
 
+def resolve_insert_parent_and_row(root: Node, selected_id: str | None) -> tuple[Node, int]:
+    if not selected_id:
+        return root, len(root.children)
+
+    selected_ref = find_node_ref(root, selected_id)
+    if selected_ref is None:
+        return root, len(root.children)
+
+    selected = selected_ref.node
+    if selected.type == "group":
+        return selected, len(selected.children)
+
+    if selected_ref.parent is None:
+        return root, len(root.children)
+
+    return selected_ref.parent, selected_ref.index + 1
+
+
+def insert_relative_to_selection(root: Node, selected_id: str | None, new_node: Node) -> bool:
+    parent, row = resolve_insert_parent_and_row(root, selected_id)
+    if parent.type != "group":
+        return False
+    parent.children.insert(row, new_node)
+    return True
+
+
 def move_node(root: Node, source_id: str, destination_parent_id: str, destination_row: int) -> bool:
     """Move node safely. Returns False when move is rejected."""
 

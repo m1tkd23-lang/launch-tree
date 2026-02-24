@@ -11,6 +11,7 @@ from PyQt6.QtGui import QDesktopServices, QDropEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
+    QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -23,7 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .domain import Node, move_node
+from .domain import Node, insert_relative_to_selection, move_node
 from .model_qt import LauncherTreeModel, NODE_ROLE
 from .storage_json import JsonStorage
 
@@ -108,6 +109,10 @@ class MainWindow(QMainWindow):
             return None, None
         return item, item.data(NODE_ROLE)
 
+    def current_selected_id(self) -> str | None:
+        _, node = self.current_item_and_node()
+        return node.id if isinstance(node, Node) else None
+
     def update_detail(self, *_):
         _, node = self.current_item_and_node()
         if node is None:
@@ -148,6 +153,10 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
         add_group = menu.addAction("Add Group")
+        add_path_file = menu.addAction("Add Path Item (File)...")
+        add_path_folder = menu.addAction("Add Path Item (Folder)...")
+        add_url = menu.addAction("Add URL Item...")
+        add_separator = menu.addAction("Add Separator")
         rename = menu.addAction("Rename")
         delete = menu.addAction("Delete")
 
@@ -158,10 +167,71 @@ class MainWindow(QMainWindow):
             self.safe_call(self.copy_current_target)
         elif action == add_group:
             self.safe_call(self.add_group)
+        elif action == add_path_file:
+            self.safe_call(self.add_path_item_file)
+        elif action == add_path_folder:
+            self.safe_call(self.add_path_item_folder)
+        elif action == add_url:
+            self.safe_call(self.add_url_item)
+        elif action == add_separator:
+            self.safe_call(self.add_separator_item)
         elif action == rename:
             self.safe_call(self.rename_node)
         elif action == delete:
             self.safe_call(self.delete_node)
+
+    def _insert_new_node(self, node: Node) -> bool:
+        inserted = insert_relative_to_selection(self.root, self.current_selected_id(), node)
+        if not inserted:
+            return False
+        self.model.rebuild()
+        self.tree.expandAll()
+        self.persist()
+        return True
+
+    def create_and_insert_item(self, item_type: str, target: str, name: str) -> bool:
+        clean_target = target.strip()
+        clean_name = name.strip()
+        if item_type in {"path", "url"} and not clean_target:
+            return False
+        if not clean_name:
+            return False
+        return self._insert_new_node(Node.make(name=clean_name, node_type=item_type, target=clean_target))
+
+    def add_path_item_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select File")
+        if not path:
+            return
+        name = Path(path).name
+        self.create_and_insert_item("path", path, name)
+
+    def add_path_item_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder")
+        if not folder:
+            return
+        name = Path(folder).name or folder
+        self.create_and_insert_item("path", folder, name)
+
+    def add_url_item(self):
+        url, ok = QInputDialog.getText(self, "Add URL Item", "URL:")
+        if not ok or not url.strip():
+            return
+        url = url.strip()
+
+        if not (url.startswith("http://") or url.startswith("https://")):
+            choice = QMessageBox.question(
+                self,
+                "URL scheme warning",
+                "URL は http/https を推奨します。続行しますか？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                return
+
+        self.create_and_insert_item("url", url, url)
+
+    def add_separator_item(self):
+        self.create_and_insert_item("separator", "", "----------")
 
     def _node_from_index(self, index) -> Node | None:
         if not index.isValid():
@@ -275,16 +345,11 @@ class MainWindow(QMainWindow):
         return parent if isinstance(parent, Node) else self.root
 
     def add_group(self):
-        item, node = self.current_item_and_node()
-        parent_node = self.root if node is None else self._parent_for_new_group(node, item)
-
         name, ok = QInputDialog.getText(self, "Add Group", "Group name:")
         if not ok or not name.strip():
             return
-        parent_node.children.append(Node.make(name=name.strip(), node_type="group"))
-        self.model.rebuild()
-        self.tree.expandAll()
-        self.persist()
+
+        self._insert_new_node(Node.make(name=name.strip(), node_type="group"))
 
     def rename_node(self):
         _, node = self.current_item_and_node()
