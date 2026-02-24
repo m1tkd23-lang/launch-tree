@@ -8,7 +8,7 @@ PyQt6 で動作するランチャーツリー管理アプリ（v1 骨格）で�
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\\Scripts\\Activate.ps1
 pip install -r requirements.txt
-python apps/main.py
+python apps/main.py  # apps/main.py が <repo>/src を sys.path に追加して起動
 ```
 
 ## 動作確認手順

@@ -2,12 +2,12 @@
 
 from pathlib import Path
 
-from src.launch_tree.domain import Node
-from src.launch_tree.storage_json import JsonStorage
+from launch_tree.domain import Node
+from launch_tree.storage_json import JsonStorage
 
 
 def test_import():
-    import src.launch_tree.core  # noqa: F401
+    import launch_tree.core  # noqa: F401
 
 
 def test_save_updates_backup(tmp_path: Path):
