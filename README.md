@@ -64,3 +64,14 @@ python apps/main.py  # apps/main.py が <repo>/src を sys.path に追加して�
 ## UIテーマ
 
 - テーマ（ダークモード）は `src/launch_tree/ui_style.py` の QSS で管理
+
+
+## 検索（v1-7: フィルター方式）
+
+- 画面上部の検索ボックスでツリーを**フィルター**表示（非一致ノードは非表示）
+- マッチ条件: `name` / `target` / `type` の部分一致（大文字小文字を無視）
+- `group` は子孫にマッチがあれば表示（親の文脈を維持）
+- `separator` は同階層に表示対象（separator以外）がある場合のみ表示
+- 入力は `textChanged` で即時反映、`Esc` でクリア
+- 検索中は結果が見えるように必要な枝を自動展開
+- 検索クリア時はツリーを折りたたみ状態へ戻す

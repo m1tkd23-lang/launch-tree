@@ -6,8 +6,8 @@ import logging
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import QPoint, Qt, QUrl
-from PyQt6.QtGui import QDesktopServices, QDropEvent
+from PyQt6.QtCore import QModelIndex, QPoint, Qt, QUrl
+from PyQt6.QtGui import QDesktopServices, QDropEvent, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -27,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .domain import Node, insert_relative_to_selection, move_node
+from .model_filter import TreeFilterProxyModel
 from .model_qt import LauncherTreeModel, NODE_ROLE
 from .storage_json import JsonStorage
 
@@ -65,7 +67,11 @@ class MainWindow(QMainWindow):
         self.tree.setDropIndicatorShown(True)
         self.tree.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.tree.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        self.tree.setUniformRowHeights(False)
+
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Search by name / target / type...")
+        self.search_box.textChanged.connect(self.on_search_changed)
+        QShortcut(QKeySequence("Esc"), self.search_box, activated=self.search_box.clear)
 
         detail_panel = QWidget(objectName="detailPanel")
         detail_layout = QVBoxLayout(detail_panel)
@@ -105,13 +111,17 @@ class MainWindow(QMainWindow):
         splitter.setSizes([600, 400])
 
         central = QWidget()
-        main_layout = QHBoxLayout(central)
+        main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(16, 16, 16, 16)
+        main_layout.setSpacing(12)
+        main_layout.addWidget(self.search_box)
         main_layout.addWidget(splitter)
         self.setCentralWidget(central)
 
-        self.model = LauncherTreeModel(self.root)
-        self.tree.setModel(self.model)
+        self.source_model = LauncherTreeModel(self.root)
+        self.proxy_model = TreeFilterProxyModel(self.root)
+        self.proxy_model.setSourceModel(self.source_model)
+        self.tree.setModel(self.proxy_model)
         self.tree.selectionModel().selectionChanged.connect(self.update_detail)
 
         self.update_detail()
@@ -124,11 +134,37 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", str(exc))
             return None
 
-    def current_item_and_node(self):
-        index = self.tree.currentIndex()
+    def on_search_changed(self, text: str) -> None:
+        self.proxy_model.set_query(text)
+        if text.strip():
+            self.expand_search_matches()
+        else:
+            self.tree.collapseAll()
+
+    def expand_search_matches(self) -> None:
+        def visit(parent_index):
+            row_count = self.proxy_model.rowCount(parent_index)
+            for row in range(row_count):
+                idx = self.proxy_model.index(row, 0, parent_index)
+                if self.proxy_model.rowCount(idx) > 0:
+                    self.tree.expand(idx)
+                    visit(idx)
+
+        visit(QModelIndex())
+
+    def map_to_source(self, index):
         if not index.isValid():
+            return index
+        return self.proxy_model.mapToSource(index)
+
+    def current_item_and_node(self):
+        proxy_index = self.tree.currentIndex()
+        if not proxy_index.isValid():
             return None, None
-        item = self.model.itemFromIndex(index)
+        source_index = self.map_to_source(proxy_index)
+        if not source_index.isValid():
+            return None, None
+        item = self.source_model.itemFromIndex(source_index)
         if item is None:
             return None, None
         return item, item.data(NODE_ROLE)
@@ -158,8 +194,9 @@ class MainWindow(QMainWindow):
     def can_launch_node(self, node: Node | None) -> bool:
         return isinstance(node, Node) and node.type in {"path", "url"} and bool(node.target.strip())
 
-    def on_tree_double_clicked(self, index):
-        item = self.model.itemFromIndex(index)
+    def on_tree_double_clicked(self, proxy_index):
+        source_index = self.map_to_source(proxy_index)
+        item = self.source_model.itemFromIndex(source_index)
         node = item.data(NODE_ROLE) if item is not None else None
         if self.can_launch_node(node):
             self.safe_call(self.launch_node, node)
@@ -168,9 +205,9 @@ class MainWindow(QMainWindow):
         self.safe_call(self._show_context_menu, pos)
 
     def _show_context_menu(self, pos: QPoint):
-        click_index = self.tree.indexAt(pos)
-        if click_index.isValid():
-            self.tree.setCurrentIndex(click_index)
+        click_proxy_index = self.tree.indexAt(pos)
+        if click_proxy_index.isValid():
+            self.tree.setCurrentIndex(click_proxy_index)
 
         _, node = self.current_item_and_node()
         launchable = self.can_launch_node(node)
@@ -215,7 +252,8 @@ class MainWindow(QMainWindow):
         inserted = insert_relative_to_selection(self.root, self.current_selected_id(), node)
         if not inserted:
             return False
-        self.model.rebuild()
+        self.source_model.rebuild()
+        self.proxy_model.set_query(self.search_box.text())
         self.tree.expandAll()
         self.persist()
         return True
@@ -264,18 +302,18 @@ class MainWindow(QMainWindow):
     def add_separator_item(self):
         self.create_and_insert_item("separator", "", "----------")
 
-    def _node_from_index(self, index) -> Node | None:
-        if not index.isValid():
+    def _node_from_source_index(self, source_index) -> Node | None:
+        if not source_index.isValid():
             return None
-        item = self.model.itemFromIndex(index)
+        item = self.source_model.itemFromIndex(source_index)
         return item.data(NODE_ROLE) if item is not None else None
 
-    def _parent_node_and_row_for_drop(self, target_index, indicator, source_node: Node) -> tuple[Node, int]:
-        if not target_index.isValid() or indicator == QAbstractItemView.DropIndicatorPosition.OnViewport:
+    def _parent_node_and_row_for_drop(self, source_target_index, indicator) -> tuple[Node, int]:
+        if not source_target_index.isValid() or indicator == QAbstractItemView.DropIndicatorPosition.OnViewport:
             return self.root, len(self.root.children)
 
-        target_node = self._node_from_index(target_index)
-        target_item = self.model.itemFromIndex(target_index)
+        target_node = self._node_from_source_index(source_target_index)
+        target_item = self.source_model.itemFromIndex(source_target_index)
         if target_node is None or target_item is None:
             return self.root, len(self.root.children)
 
@@ -296,15 +334,21 @@ class MainWindow(QMainWindow):
             row += 1
         return parent_node, row
 
-    def handle_tree_drop(self, source_index, target_index, indicator) -> bool:
-        return bool(self.safe_call(self._handle_tree_drop, source_index, target_index, indicator))
+    def handle_tree_drop(self, source_proxy_index, target_proxy_index, indicator) -> bool:
+        if self.search_box.text().strip():
+            logging.info("Drag/drop disabled while search filter is active")
+            return False
+        return bool(self.safe_call(self._handle_tree_drop, source_proxy_index, target_proxy_index, indicator))
 
-    def _handle_tree_drop(self, source_index, target_index, indicator) -> bool:
-        source_node = self._node_from_index(source_index)
+    def _handle_tree_drop(self, source_proxy_index, target_proxy_index, indicator) -> bool:
+        source_index = self.map_to_source(source_proxy_index)
+        target_index = self.map_to_source(target_proxy_index)
+
+        source_node = self._node_from_source_index(source_index)
         if source_node is None:
             return False
 
-        dest_parent, dest_row = self._parent_node_and_row_for_drop(target_index, indicator, source_node)
+        dest_parent, dest_row = self._parent_node_and_row_for_drop(target_index, indicator)
 
         moved = move_node(
             root=self.root,
@@ -316,7 +360,8 @@ class MainWindow(QMainWindow):
             logging.info("Rejected drag/drop move source=%s dest_parent=%s", source_node.id, dest_parent.id)
             return False
 
-        self.model.rebuild()
+        self.source_model.rebuild()
+        self.proxy_model.set_query(self.search_box.text())
         self.tree.expandAll()
         self.persist()
         return True
@@ -381,7 +426,8 @@ class MainWindow(QMainWindow):
         if not ok or not name.strip():
             return
         node.name = name.strip()
-        self.model.rebuild()
+        self.source_model.rebuild()
+        self.proxy_model.set_query(self.search_box.text())
         self.persist()
 
     def delete_node(self):
@@ -404,7 +450,8 @@ class MainWindow(QMainWindow):
             parent_node = self.root
 
         parent_node.children = [child for child in parent_node.children if child.id != node.id]
-        self.model.rebuild()
+        self.source_model.rebuild()
+        self.proxy_model.set_query(self.search_box.text())
         self.persist()
 
     def persist(self):

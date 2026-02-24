@@ -17,6 +17,19 @@ QSplitter::handle {
     width: 2px;
 }
 
+QLineEdit {
+    background-color: #1e1e1e;
+    color: #efefef;
+    border: 1px solid #343434;
+    border-radius: 12px;
+    padding: 10px 12px;
+    font-size: 14px;
+}
+
+QLineEdit:focus {
+    border: 1px solid #4b5f7d;
+}
+
 QTreeView {
     background-color: #1b1b1b;
     border: 1px solid #2b2b2b;
