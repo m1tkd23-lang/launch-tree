@@ -37,3 +37,12 @@ python apps/main.py  # apps/main.py が <repo>/src を sys.path に追加して�
 - 右クリック `Copy target` で target をクリップボードへコピー
 - `group` / `separator` など path/url 以外は `Launch` / `Copy target` が無効
 - 存在しない path、不正 URL、起動失敗時はエラーダイアログを表示し、詳細を `logs/app.log` に記録
+
+## Drag & Drop（v1-3）
+
+- ツリー上でドラッグ&ドロップにより、同一階層の並び替えと別グループ配下への移動が可能
+- drop先が `group` の場合は子要素として挿入、`item/separator` の場合は同階層に挿入
+- root 直下へのドロップにも対応
+- 自分自身・子孫配下へのドロップは禁止（循環防止）
+- `group` 以外は子を持てないため、移動先 parent は常に `group` に制限
+- DnD後は `data/launcher.json` と `data/launcher.json.bak` に保存され、再起動後も反映

@@ -6,10 +6,11 @@ import logging
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import QPoint, Qt, QUrl
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtGui import QDesktopServices, QDropEvent, QUrl
 from PyQt6.QtWidgets import (
     QApplication,
+    QAbstractItemView,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -22,9 +23,25 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .domain import Node
+from .domain import Node, move_node
 from .model_qt import LauncherTreeModel, NODE_ROLE
 from .storage_json import JsonStorage
+
+
+class DragDropTreeView(QTreeView):
+    def __init__(self, on_drop_move):
+        super().__init__()
+        self.on_drop_move = on_drop_move
+
+    def dropEvent(self, event: QDropEvent):
+        source_index = self.currentIndex()
+        target_index = self.indexAt(event.position().toPoint())
+        indicator = self.dropIndicatorPosition()
+
+        if self.on_drop_move(source_index, target_index, indicator):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
 
 
 class MainWindow(QMainWindow):
@@ -36,10 +53,15 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Launch Tree")
         self.resize(900, 580)
 
-        self.tree = QTreeView()
+        self.tree = DragDropTreeView(self.handle_tree_drop)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_context_menu)
         self.tree.doubleClicked.connect(self.on_tree_double_clicked)
+        self.tree.setDragEnabled(True)
+        self.tree.setAcceptDrops(True)
+        self.tree.setDropIndicatorShown(True)
+        self.tree.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.tree.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
 
         self.name_label = QLabel("name: -")
         self.type_label = QLabel("type: -")
@@ -140,6 +162,63 @@ class MainWindow(QMainWindow):
             self.safe_call(self.rename_node)
         elif action == delete:
             self.safe_call(self.delete_node)
+
+    def _node_from_index(self, index) -> Node | None:
+        if not index.isValid():
+            return None
+        item = self.model.itemFromIndex(index)
+        return item.data(NODE_ROLE) if item is not None else None
+
+    def _parent_node_and_row_for_drop(self, target_index, indicator, source_node: Node) -> tuple[Node, int]:
+        if not target_index.isValid() or indicator == QAbstractItemView.DropIndicatorPosition.OnViewport:
+            return self.root, len(self.root.children)
+
+        target_node = self._node_from_index(target_index)
+        target_item = self.model.itemFromIndex(target_index)
+        if target_node is None or target_item is None:
+            return self.root, len(self.root.children)
+
+        if indicator == QAbstractItemView.DropIndicatorPosition.OnItem:
+            if target_node.type == "group":
+                return target_node, len(target_node.children)
+            parent_item = target_item.parent()
+            parent_node = self.root if parent_item is None else parent_item.data(NODE_ROLE)
+            parent_node = parent_node if isinstance(parent_node, Node) else self.root
+            return parent_node, target_item.row() + 1
+
+        parent_item = target_item.parent()
+        parent_node = self.root if parent_item is None else parent_item.data(NODE_ROLE)
+        parent_node = parent_node if isinstance(parent_node, Node) else self.root
+
+        row = target_item.row()
+        if indicator == QAbstractItemView.DropIndicatorPosition.BelowItem:
+            row += 1
+        return parent_node, row
+
+    def handle_tree_drop(self, source_index, target_index, indicator) -> bool:
+        return bool(self.safe_call(self._handle_tree_drop, source_index, target_index, indicator))
+
+    def _handle_tree_drop(self, source_index, target_index, indicator) -> bool:
+        source_node = self._node_from_index(source_index)
+        if source_node is None:
+            return False
+
+        dest_parent, dest_row = self._parent_node_and_row_for_drop(target_index, indicator, source_node)
+
+        moved = move_node(
+            root=self.root,
+            source_id=source_node.id,
+            destination_parent_id=dest_parent.id,
+            destination_row=dest_row,
+        )
+        if not moved:
+            logging.info("Rejected drag/drop move source=%s dest_parent=%s", source_node.id, dest_parent.id)
+            return False
+
+        self.model.rebuild()
+        self.tree.expandAll()
+        self.persist()
+        return True
 
     def launch_current(self):
         _, node = self.current_item_and_node()
