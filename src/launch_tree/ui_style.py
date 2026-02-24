@@ -12,6 +12,34 @@ QMainWindow {
     background-color: #141414;
 }
 
+QWidget#windowHeader {
+    background-color: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 12px;
+}
+
+QLabel#windowHeaderTitle {
+    color: #e8e8e8;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QPushButton#titleBarButton,
+QPushButton#titleBarButtonClose {
+    min-width: 28px;
+    min-height: 24px;
+    max-width: 28px;
+    max-height: 24px;
+    padding: 0px;
+    border-radius: 8px;
+    font-size: 13px;
+}
+
+QPushButton#titleBarButtonClose:hover {
+    background-color: #a33a3a;
+    border-color: #b84a4a;
+}
+
 QSplitter::handle {
     background-color: #232323;
     width: 2px;

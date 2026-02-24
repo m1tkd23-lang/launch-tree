@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from PyQt6.QtCore import QModelIndex, QPoint, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QDropEvent, QKeySequence, QShortcut
+from PyQt6.QtGui import QDesktopServices, QDropEvent, QKeySequence, QMouseEvent, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -62,6 +62,51 @@ class EditableValueLabel(QLabel):
         super().mouseDoubleClickEvent(event)
 
 
+class WindowHeader(QWidget):
+    def __init__(self, window: QMainWindow):
+        super().__init__(objectName="windowHeader")
+        self.window = window
+        self.drag_offset: QPoint | None = None
+        self.setFixedHeight(40)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(8)
+
+        title = QLabel("Launch Tree", objectName="windowHeaderTitle")
+        layout.addWidget(title)
+        layout.addStretch(1)
+
+        self.min_btn = QPushButton("_", objectName="titleBarButton")
+        self.min_btn.setToolTip("Minimize")
+        self.min_btn.clicked.connect(self.window.showMinimized)
+
+        self.close_btn = QPushButton("×", objectName="titleBarButtonClose")
+        self.close_btn.setToolTip("Close")
+        self.close_btn.clicked.connect(self.window.close)
+
+        layout.addWidget(self.min_btn)
+        layout.addWidget(self.close_btn)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.drag_offset = event.globalPosition().toPoint() - self.window.frameGeometry().topLeft()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self.drag_offset is not None and (event.buttons() & Qt.MouseButton.LeftButton):
+            self.window.move(event.globalPosition().toPoint() - self.drag_offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        self.drag_offset = None
+        super().mouseReleaseEvent(event)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, storage: JsonStorage):
         super().__init__()
@@ -70,6 +115,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Launch Tree")
         self.resize(1000, 650)
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
 
         self.tree = DragDropTreeView(self.handle_tree_drop)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -141,8 +187,10 @@ class MainWindow(QMainWindow):
 
         central = QWidget()
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(16, 16, 16, 16)
-        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(10)
+        self.header = WindowHeader(self)
+        main_layout.addWidget(self.header)
         main_layout.addWidget(self.search_box)
         main_layout.addWidget(splitter)
         self.setCentralWidget(central)
