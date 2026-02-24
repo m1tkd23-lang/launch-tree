@@ -60,3 +60,7 @@ python apps/main.py  # apps/main.py が <repo>/src を sys.path に追加して�
   - 選択が `item/separator` の場合は同階層の直後に追加
   - 未選択の場合は root 直下に追加
 - 追加後は `data/launcher.json` と `data/launcher.json.bak` に保存され、再起動後も保持
+
+## UIテーマ
+
+- テーマ（ダークモード）は `src/launch_tree/ui_style.py` の QSS で管理

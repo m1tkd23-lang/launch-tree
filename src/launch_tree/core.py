@@ -47,6 +47,9 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     from .ui_mainwindow import MainWindow
+    from .ui_style import APP_QSS
+
+    app.setStyleSheet(APP_QSS)
 
     storage = JsonStorage(DATA_PATH)
     window = MainWindow(storage)

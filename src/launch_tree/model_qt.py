@@ -30,6 +30,8 @@ class LauncherTreeModel(QStandardItemModel):
         item = QStandardItem(node.name)
         item.setEditable(False)
         item.setData(node, NODE_ROLE)
+        if node.target:
+            item.setToolTip(node.target)
         for child in node.children:
             item.appendRow(self._item_from_node(child))
         return item

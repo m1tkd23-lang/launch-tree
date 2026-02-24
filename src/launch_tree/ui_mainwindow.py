@@ -12,12 +12,14 @@ from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPushButton,
     QSplitter,
     QTreeView,
     QVBoxLayout,
@@ -52,7 +54,7 @@ class MainWindow(QMainWindow):
         self.root = self.storage.load_tree()
 
         self.setWindowTitle("Launch Tree")
-        self.resize(900, 580)
+        self.resize(1000, 650)
 
         self.tree = DragDropTreeView(self.handle_tree_drop)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -63,26 +65,48 @@ class MainWindow(QMainWindow):
         self.tree.setDropIndicatorShown(True)
         self.tree.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.tree.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.tree.setUniformRowHeights(False)
 
-        self.name_label = QLabel("name: -")
-        self.type_label = QLabel("type: -")
-        self.target_label = QLabel("target: -")
-
-        detail_panel = QWidget()
+        detail_panel = QWidget(objectName="detailPanel")
         detail_layout = QVBoxLayout(detail_panel)
-        detail_layout.addWidget(self.name_label)
-        detail_layout.addWidget(self.type_label)
-        detail_layout.addWidget(self.target_label)
+        detail_layout.setContentsMargins(18, 18, 18, 18)
+        detail_layout.setSpacing(16)
+
+        self.launch_button = QPushButton("Launch")
+        self.launch_button.clicked.connect(lambda: self.safe_call(self.launch_current))
+        self.copy_target_button = QPushButton("Copy target")
+        self.copy_target_button.clicked.connect(lambda: self.safe_call(self.copy_current_target))
+
+        detail_layout.addWidget(self.launch_button)
+        detail_layout.addWidget(self.copy_target_button)
+
+        detail_card = QFrame(objectName="detailCard")
+        card_layout = QVBoxLayout(detail_card)
+        card_layout.setContentsMargins(16, 16, 16, 16)
+        card_layout.setSpacing(10)
+
+        title = QLabel("Details", objectName="detailTitle")
+        self.name_label = QLabel("name: -", objectName="detailValue")
+        self.type_label = QLabel("type: -", objectName="detailValue")
+        self.target_label = QLabel("target: -", objectName="detailValue")
+        self.target_label.setWordWrap(True)
+
+        card_layout.addWidget(title)
+        card_layout.addWidget(self.name_label)
+        card_layout.addWidget(self.type_label)
+        card_layout.addWidget(self.target_label)
+
+        detail_layout.addWidget(detail_card)
         detail_layout.addStretch(1)
 
         splitter = QSplitter()
         splitter.addWidget(self.tree)
         splitter.addWidget(detail_panel)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([600, 400])
 
         central = QWidget()
         main_layout = QHBoxLayout(central)
+        main_layout.setContentsMargins(16, 16, 16, 16)
         main_layout.addWidget(splitter)
         self.setCentralWidget(central)
 
@@ -119,10 +143,17 @@ class MainWindow(QMainWindow):
             self.name_label.setText("name: -")
             self.type_label.setText("type: -")
             self.target_label.setText("target: -")
+            self.launch_button.setEnabled(False)
+            self.copy_target_button.setEnabled(False)
             return
+
         self.name_label.setText(f"name: {node.name}")
         self.type_label.setText(f"type: {node.type}")
         self.target_label.setText(f"target: {node.target}")
+
+        launchable = self.can_launch_node(node)
+        self.launch_button.setEnabled(launchable)
+        self.copy_target_button.setEnabled(launchable)
 
     def can_launch_node(self, node: Node | None) -> bool:
         return isinstance(node, Node) and node.type in {"path", "url"} and bool(node.target.strip())
@@ -334,15 +365,6 @@ class MainWindow(QMainWindow):
         if not ok:
             raise RuntimeError(f"Failed to open URL: {node.target}")
         logging.info("Launched URL target: %s", node.target)
-
-    def _parent_for_new_group(self, node: Node, item) -> Node:
-        if node.type == "group":
-            return node
-        parent_item = item.parent()
-        if parent_item is None:
-            return self.root
-        parent = parent_item.data(NODE_ROLE)
-        return parent if isinstance(parent, Node) else self.root
 
     def add_group(self):
         name, ok = QInputDialog.getText(self, "Add Group", "Group name:")
