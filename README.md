@@ -101,6 +101,8 @@ python apps/main.py  # apps/main.py が <repo>/src を sys.path に追加して�
 
 ## ツリーアイコン（v1-y）
 
-- group/path/url はツリーで自動アイコン表示（外部画像ファイルは不要）
-- path の `.exe` は環境依存で実アイコン取得を試み、失敗時は標準アイコンへフォールバック
+- 固定アイコン/絵文字プレフィックスは使わず、表示名は `name` をそのまま表示（separator は `—`）
+- `path` の `.exe` は環境依存で実アイコン取得を試み、失敗時は標準アイコンへフォールバック
+- `path` の非 exe（pdf/txt等）は、実アイコンが取得できた場合のみ表示し、取得できなければアイコンなし
+- `group` / `url` / `separator` はアイコンなし
 - アイコンは表示専用で、JSONデータ（name/target）には影響しない

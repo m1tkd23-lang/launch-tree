@@ -1,4 +1,4 @@
-"""Pure icon category selection logic."""
+"""Pure icon selection helpers."""
 
 from __future__ import annotations
 
@@ -7,20 +7,17 @@ from pathlib import PurePath
 from .domain import Node
 
 
-def icon_category_for_node(node: Node) -> str:
-    if node.type == "group":
-        return "group"
-    if node.type == "url":
-        return "url"
-    if node.type == "separator":
-        return "separator"
+def icon_mode_for_node(node: Node) -> str:
+    """Return icon mode used by UI icon resolver.
+
+    - exe: path .exe (try real icon, fallback allowed)
+    - path_optional: non-exe path (show only when real icon can be obtained)
+    - none: no icon
+    """
+
     if node.type == "path":
         target = (node.target or "").strip()
-        suffix = PurePath(target).suffix.lower()
-        if suffix == ".exe":
-            return "path_exe"
-        looks_folder = target.endswith("/") or target.endswith("\\") or suffix == ""
-        if looks_folder:
-            return "path_folder"
-        return "path_file"
-    return "default"
+        if PurePath(target).suffix.lower() == ".exe":
+            return "exe"
+        return "path_optional"
+    return "none"

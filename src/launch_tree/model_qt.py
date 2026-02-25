@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path, PurePath
+from pathlib import Path
 
 from PyQt6.QtCore import QFileInfo, Qt
-from PyQt6.QtGui import QIcon, QStandardItem, QStandardItemModel
+from PyQt6.QtGui import QFont, QIcon, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import QApplication, QFileIconProvider, QStyle, QStyleFactory
 
 from .domain import Node
-from .icon_logic import icon_category_for_node
+from .icon_logic import icon_mode_for_node
 
 
 NODE_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -21,32 +21,23 @@ class IconResolver:
         self._provider = QFileIconProvider()
 
     def icon_for_node(self, node: Node) -> QIcon:
-        category = icon_category_for_node(node)
+        mode = icon_mode_for_node(node)
 
-        if category == "path_exe":
-            target = (node.target or "").strip()
-            cache_key = f"exe::{target}"
-            if cache_key in self._cache:
-                return self._cache[cache_key]
+        if mode == "none":
+            return QIcon()
+
+        target = (node.target or "").strip()
+        cache_key = f"{mode}::{target}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        if mode == "exe":
             icon = self._icon_from_path_or_fallback(target, self._style_icon(QStyle.StandardPixmap.SP_ComputerIcon))
             self._cache[cache_key] = icon
             return icon
 
-        cache_key = f"cat::{category}"
-        if cache_key in self._cache:
-            return self._cache[cache_key]
-
-        if category in {"group", "path_folder"}:
-            icon = self._style_icon(QStyle.StandardPixmap.SP_DirIcon)
-        elif category == "url":
-            icon = self._style_icon(QStyle.StandardPixmap.SP_DriveNetIcon)
-        elif category == "path_file":
-            icon = self._style_icon(QStyle.StandardPixmap.SP_FileIcon)
-        elif category == "separator":
-            icon = QIcon()
-        else:
-            icon = self._style_icon(QStyle.StandardPixmap.SP_FileIcon)
-
+        # mode == path_optional: show icon only if real icon obtained, otherwise none.
+        icon = self._icon_from_path_or_fallback(target, QIcon())
         self._cache[cache_key] = icon
         return icon
 
@@ -67,19 +58,6 @@ class IconResolver:
 
 
 def display_name_for_node(node: Node) -> str:
-    if node.type == "group":
-        return f"📁 {node.name}"
-    if node.type == "url":
-        return f"🌐 {node.name}"
-    if node.type == "path":
-        target = (node.target or "").strip()
-        suffix = PurePath(target).suffix.lower()
-        if suffix == ".exe":
-            return f"⚙️ {node.name}"
-        looks_folder = target.endswith("/") or target.endswith("\\") or suffix == ""
-        if looks_folder:
-            return f"🗂️ {node.name}"
-        return f"📄 {node.name}"
     if node.type == "separator":
         return "—"
     return node.name
@@ -106,6 +84,13 @@ class LauncherTreeModel(QStandardItemModel):
         item.setEditable(False)
         item.setData(node, NODE_ROLE)
         item.setIcon(self.icon_resolver.icon_for_node(node))
+
+        if node.type == "group":
+            font = QFont(item.font())
+            font.setBold(True)
+            font.setPointSize(font.pointSize() + 1)
+            item.setFont(font)
+
         if node.target:
             item.setToolTip(node.target)
         for child in node.children:
