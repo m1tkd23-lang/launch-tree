@@ -6,18 +6,18 @@ from launch_tree.domain import Node
 from launch_tree.model_qt import display_name_for_node
 
 
-def test_prefix_for_group_and_url():
-    assert display_name_for_node(Node(id="1", name="G", type="group", target="", children=[])).startswith("📁 ")
-    assert display_name_for_node(Node(id="2", name="U", type="url", target="https://x", children=[])).startswith("🌐 ")
+def test_group_url_and_path_do_not_add_emoji_prefixes():
+    group = Node(id="1", name="G", type="group", target="", children=[])
+    url = Node(id="2", name="U", type="url", target="https://x", children=[])
+    exe = Node(id="3", name="App", type="path", target="C:/Tools/app.exe", children=[])
+    folder = Node(id="4", name="Dir", type="path", target="C:/Tools/", children=[])
+    file = Node(id="5", name="Doc", type="path", target="C:/Docs/readme.txt", children=[])
 
-
-def test_prefix_for_path_variants():
-    exe = Node(id="1", name="App", type="path", target="C:/Tools/app.exe", children=[])
-    folder = Node(id="2", name="Dir", type="path", target="C:/Tools/", children=[])
-    file = Node(id="3", name="Doc", type="path", target="C:/Docs/readme.txt", children=[])
-    assert display_name_for_node(exe).startswith("⚙️ ")
-    assert display_name_for_node(folder).startswith("🗂️ ")
-    assert display_name_for_node(file).startswith("📄 ")
+    assert display_name_for_node(group) == "G"
+    assert display_name_for_node(url) == "U"
+    assert display_name_for_node(exe) == "App"
+    assert display_name_for_node(folder) == "Dir"
+    assert display_name_for_node(file) == "Doc"
 
 
 def test_separator_display_only():
