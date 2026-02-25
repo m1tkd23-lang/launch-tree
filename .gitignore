@@ -31,3 +31,8 @@ Thumbs.db
 /data/launcher.json
 /data/launcher.json.bak
 
+
+# local user data
+/data/launcher.json
+/data/launcher.json.bak
+
