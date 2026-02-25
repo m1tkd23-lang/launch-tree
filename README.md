@@ -106,3 +106,19 @@ python apps/main.py  # apps/main.py が <repo>/src を sys.path に追加して�
 - `path` の非 exe（pdf/txt等）は、実アイコンが取得できた場合のみ表示し、取得できなければアイコンなし
 - `group` / `url` / `separator` はアイコンなし
 - アイコンは表示専用で、JSONデータ（name/target）には影響しない
+
+
+## 自動バックアップ/復旧（rev1.0 安全装置）
+
+- 保存時 (`save_tree`) にバックアップを自動作成
+  - 直近: `data/launcher.json.bak`（上書き）
+  - 世代: `data/backup/launcher_YYYYMMDD_HHMMSS_ffffff.json`（毎回新規）
+- 保存前に既存 `launcher.json` からバックアップを作成してから新しい `launcher.json` を書き込む
+- 世代バックアップは最新 50 件だけ保持し、古いものは自動削除（失敗時は warning ログ）
+- 起動時に `launcher.json` が欠損/破損した場合は `.bak` から復旧して再読込
+- `launcher.json` が無い初回起動時は `data/launcher.example.json` があればコピーして生成、無ければ空ツリーを生成
+
+## データ管理ポリシー
+
+- `data/launcher.json` / `data/launcher.json.bak` / `data/backup/*` は Git 管理外
+- 配布用の初期データは `data/launcher.example.json` を使用
