@@ -27,3 +27,8 @@ build/
 # OS junk
 .DS_Store
 Thumbs.db
+
+
+/data/user_state.json
+data\launcher.json
+data\launcher.json.bak

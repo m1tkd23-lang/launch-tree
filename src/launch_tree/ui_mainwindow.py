@@ -292,18 +292,6 @@ class MainWindow(QMainWindow):
             self.tree.expandAll()
         self._ensure_node_visible(preferred_selected_id)
 
-    def _refresh_after_drop(self, moved_node_id: str | None) -> None:
-        """Resync model/proxy strictly after DnD mutations."""
-        self.tree.setUpdatesEnabled(False)
-        try:
-            self.source_model.set_view_state(self.user_state, self.view_mode)
-            self.source_model.force_reset_refresh()
-            self.proxy_model.set_query(self.search_box.text())
-            self.proxy_model.refresh_for_tree_change()
-            self.tree.expandAll()
-            self._ensure_node_visible(moved_node_id)
-        finally:
-            self.tree.setUpdatesEnabled(True)
 
     def _source_index_for_node_id(self, node_id: str | None):
         if not node_id:
@@ -606,6 +594,7 @@ class MainWindow(QMainWindow):
         if not inserted:
             return False
         self._refresh_tree_model(preferred_selected_id=node.id)
+
         self.tree.expandAll()
         self.persist()
         return True
@@ -731,7 +720,7 @@ class MainWindow(QMainWindow):
                 first_inserted_id = node.id
             dest_parent.children.insert(dest_row + offset, node)
 
-        self._refresh_after_drop(first_inserted_id)
+
         self.persist()
         logging.info("Imported %d external drop entries", len(entries))
         return True
@@ -773,7 +762,7 @@ class MainWindow(QMainWindow):
             logging.info("Rejected drag/drop move source=%s dest_parent=%s", source_node.id, dest_parent.id)
             return False
 
-        self._refresh_after_drop(source_node.id)
+
         self.persist()
         return True
 
