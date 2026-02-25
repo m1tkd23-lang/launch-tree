@@ -40,7 +40,7 @@ from .domain import Node, find_node_ref, insert_relative_to_selection, move_node
 from .drop_import_logic import build_drop_entries
 from .edit_logic import ALLOWED_NODE_TYPES, apply_node_update
 from .model_filter import TreeFilterProxyModel
-from .model_qt import LauncherTreeModel, NODE_ROLE
+from .model_qt import LauncherTreeModel, NODE_ROLE, VirtualNode
 from .storage_json import JsonStorage, load_user_state, save_user_state, set_user_state_path, update_recent
 
 
@@ -79,7 +79,8 @@ class DragDropTreeView(QTreeView):
             return
 
         # 内部DnD：並び替え/階層移動（既存処理）
-        source_index = self.currentIndex()
+        selected_indexes = self.selectedIndexes()
+        source_index = selected_indexes[0] if selected_indexes else self.currentIndex()
         if self.on_drop_move(source_index, target_index, indicator):
             event.acceptProposedAction()
         else:
@@ -180,6 +181,11 @@ class MainWindow(QMainWindow):
         self._set_view_mode_combo(self.view_mode)
         self.view_mode_combo.currentIndexChanged.connect(self.on_view_mode_changed)
 
+        self.expand_all_button = QPushButton("Expand all")
+        self.expand_all_button.clicked.connect(self.tree.expandAll)
+        self.collapse_all_button = QPushButton("Collapse all")
+        self.collapse_all_button.clicked.connect(self.tree.collapseAll)
+
         detail_panel = QWidget(objectName="detailPanel")
         detail_layout = QVBoxLayout(detail_panel)
         detail_layout.setContentsMargins(18, 18, 18, 18)
@@ -247,6 +253,8 @@ class MainWindow(QMainWindow):
         search_layout = QHBoxLayout(search_row)
         search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.addWidget(self.search_box, 1)
+        search_layout.addWidget(self.expand_all_button)
+        search_layout.addWidget(self.collapse_all_button)
         search_layout.addWidget(self.view_mode_combo)
 
         main_layout.addWidget(search_row)
@@ -274,12 +282,63 @@ class MainWindow(QMainWindow):
         if idx >= 0:
             self.view_mode_combo.setCurrentIndex(idx)
 
-    def _refresh_tree_model(self, expand: bool = False) -> None:
+    def _refresh_tree_model(self, expand: bool = False, preferred_selected_id: str | None = None) -> None:
         self.source_model.set_view_state(self.user_state, self.view_mode)
         self.source_model.rebuild()
         self.proxy_model.set_query(self.search_box.text())
+        # Structural changes can leave proxy visibility stale; force recomputation before selection restore.
+        self.proxy_model.refresh_for_tree_change()
         if expand:
             self.tree.expandAll()
+        self._ensure_node_visible(preferred_selected_id)
+
+    def _refresh_after_drop(self, moved_node_id: str | None) -> None:
+        """Resync model/proxy strictly after DnD mutations."""
+        self.tree.setUpdatesEnabled(False)
+        try:
+            self.source_model.set_view_state(self.user_state, self.view_mode)
+            self.source_model.force_reset_refresh()
+            self.proxy_model.set_query(self.search_box.text())
+            self.proxy_model.refresh_for_tree_change()
+            self.tree.expandAll()
+            self._ensure_node_visible(moved_node_id)
+        finally:
+            self.tree.setUpdatesEnabled(True)
+
+    def _source_index_for_node_id(self, node_id: str | None):
+        if not node_id:
+            return QModelIndex()
+
+        def walk(parent_index):
+            rows = self.source_model.rowCount(parent_index)
+            for row in range(rows):
+                idx = self.source_model.index(row, 0, parent_index)
+                node = self._node_from_source_index(idx)
+                if isinstance(node, Node) and node.id == node_id:
+                    return idx
+                child_match = walk(idx)
+                if child_match.isValid():
+                    return child_match
+            return QModelIndex()
+
+        return walk(QModelIndex())
+
+    def _ensure_node_visible(self, node_id: str | None) -> None:
+        source_index = self._source_index_for_node_id(node_id)
+        if not source_index.isValid():
+            return
+
+        proxy_index = self.proxy_model.mapFromSource(source_index)
+        if not proxy_index.isValid():
+            return
+
+        parent = proxy_index.parent()
+        while parent.isValid():
+            self.tree.expand(parent)
+            parent = parent.parent()
+
+        self.tree.setCurrentIndex(proxy_index)
+        self.tree.scrollTo(proxy_index, QAbstractItemView.ScrollHint.PositionAtCenter)
 
     def _save_user_state(self) -> None:
         save_user_state(self.user_state)
@@ -546,7 +605,7 @@ class MainWindow(QMainWindow):
         inserted = insert_relative_to_selection(self.root, self.current_selected_id(), node)
         if not inserted:
             return False
-        self._refresh_tree_model()
+        self._refresh_tree_model(preferred_selected_id=node.id)
         self.tree.expandAll()
         self.persist()
         return True
@@ -602,6 +661,28 @@ class MainWindow(QMainWindow):
         node = item.data(NODE_ROLE) if item is not None else None
         return node if isinstance(node, Node) else None
 
+    def _is_under_virtual_node(self, source_index) -> bool:
+        current = source_index
+        while current.isValid():
+            item = self.source_model.itemFromIndex(current)
+            node = item.data(NODE_ROLE) if item is not None else None
+            if isinstance(node, VirtualNode):
+                return True
+            current = current.parent()
+        return False
+
+    def _row_within_node_siblings(self, target_item) -> int:
+        parent_item = target_item.parent()
+        container = self.source_model.invisibleRootItem() if parent_item is None else parent_item
+
+        node_row = 0
+        for row in range(target_item.row()):
+            sibling = container.child(row)
+            sibling_node = sibling.data(NODE_ROLE) if sibling is not None else None
+            if isinstance(sibling_node, Node):
+                node_row += 1
+        return node_row
+
     def _parent_node_and_row_for_drop(self, source_target_index, indicator) -> tuple[Node, int]:
         if not source_target_index.isValid() or indicator == QAbstractItemView.DropIndicatorPosition.OnViewport:
             return self.root, len(self.root.children)
@@ -617,13 +698,13 @@ class MainWindow(QMainWindow):
             parent_item = target_item.parent()
             parent_node = self.root if parent_item is None else parent_item.data(NODE_ROLE)
             parent_node = parent_node if isinstance(parent_node, Node) else self.root
-            return parent_node, target_item.row() + 1
+            return parent_node, self._row_within_node_siblings(target_item) + 1
 
         parent_item = target_item.parent()
         parent_node = self.root if parent_item is None else parent_item.data(NODE_ROLE)
         parent_node = parent_node if isinstance(parent_node, Node) else self.root
 
-        row = target_item.row()
+        row = self._row_within_node_siblings(target_item)
         if indicator == QAbstractItemView.DropIndicatorPosition.BelowItem:
             row += 1
         return parent_node, row
@@ -643,12 +724,14 @@ class MainWindow(QMainWindow):
         if dest_parent is not self.root and dest_parent.type != "group":
             return False
 
+        first_inserted_id: str | None = None
         for offset, entry in enumerate(entries):
             node = Node.make(name=entry.name, node_type=entry.item_type, target=entry.target)
+            if first_inserted_id is None:
+                first_inserted_id = node.id
             dest_parent.children.insert(dest_row + offset, node)
 
-        self._refresh_tree_model()
-        self.tree.expandAll()
+        self._refresh_after_drop(first_inserted_id)
         self.persist()
         logging.info("Imported %d external drop entries", len(entries))
         return True
@@ -657,14 +740,25 @@ class MainWindow(QMainWindow):
         if self.search_box.text().strip():
             logging.info("Drag/drop disabled while search filter is active")
             return False
+        if self.view_mode != "all":
+            logging.info("Drag/drop disabled outside all view mode")
+            return False
         return bool(self.safe_call(self._handle_tree_drop, source_proxy_index, target_proxy_index, indicator))
 
     def _handle_tree_drop(self, source_proxy_index, target_proxy_index, indicator) -> bool:
         source_index = self.map_to_source(source_proxy_index)
         target_index = self.map_to_source(target_proxy_index)
 
+        if self._is_under_virtual_node(source_index):
+            logging.info("Rejected drag/drop from virtual section")
+            return False
+
         source_node = self._node_from_source_index(source_index)
         if source_node is None:
+            return False
+
+        if self._is_under_virtual_node(target_index):
+            logging.info("Rejected drag/drop target in virtual section")
             return False
 
         dest_parent, dest_row = self._parent_node_and_row_for_drop(target_index, indicator)
@@ -679,8 +773,7 @@ class MainWindow(QMainWindow):
             logging.info("Rejected drag/drop move source=%s dest_parent=%s", source_node.id, dest_parent.id)
             return False
 
-        self._refresh_tree_model()
-        self.tree.expandAll()
+        self._refresh_after_drop(source_node.id)
         self.persist()
         return True
 

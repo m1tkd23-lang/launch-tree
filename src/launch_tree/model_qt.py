@@ -120,6 +120,17 @@ class LauncherTreeModel(QStandardItemModel):
         self.view_mode = view_mode
 
     def rebuild(self) -> None:
+        self.beginResetModel()
+        try:
+            self._rebuild_contents()
+        finally:
+            self.endResetModel()
+
+    def force_reset_refresh(self) -> None:
+        """Force a model reset so views/proxies resynchronize internal indexes."""
+        self.rebuild()
+
+    def _rebuild_contents(self) -> None:
         self.clear()
         self.setHorizontalHeaderLabels(["Launch Tree"])
         invisible = self.invisibleRootItem()
