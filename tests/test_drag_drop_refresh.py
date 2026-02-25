@@ -70,4 +70,4 @@ def test_refresh_for_tree_change_recomputes_query_visibility(window):
     assert source_index.isValid()
     assert not window.proxy_model.mapFromSource(source_index).isValid()
 
-    codex-work
+
