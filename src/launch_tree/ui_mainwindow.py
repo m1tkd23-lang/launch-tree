@@ -7,7 +7,15 @@ import os
 from pathlib import Path
 
 from PyQt6.QtCore import QModelIndex, QPoint, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QDropEvent, QKeySequence, QMouseEvent, QShortcut
+from PyQt6.QtGui import (
+    QDesktopServices,
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QKeySequence,
+    QMouseEvent,
+    QShortcut,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -28,6 +36,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .domain import Node, insert_relative_to_selection, move_node
+from .drop_import_logic import build_drop_entries
 from .edit_logic import ALLOWED_NODE_TYPES, apply_node_update
 from .model_filter import TreeFilterProxyModel
 from .model_qt import LauncherTreeModel, NODE_ROLE
@@ -35,15 +44,41 @@ from .storage_json import JsonStorage
 
 
 class DragDropTreeView(QTreeView):
-    def __init__(self, on_drop_move):
+    def __init__(self, on_drop_move, on_external_drop):
         super().__init__()
         self.on_drop_move = on_drop_move
+        self.on_external_drop = on_external_drop
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        # 外部ドロップ（Explorer等）を許可
+        if event.mimeData().hasUrls() and (event.source() is None or event.source() is not self):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent):
+        if event.mimeData().hasUrls() and (event.source() is None or event.source() is not self):
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
 
     def dropEvent(self, event: QDropEvent):
-        source_index = self.currentIndex()
         target_index = self.indexAt(event.position().toPoint())
         indicator = self.dropIndicatorPosition()
 
+        # 外部ドロップ（Explorer等）：登録処理へ
+        if event.mimeData().hasUrls() and (event.source() is None or event.source() is not self):
+            raw_values: list[str] = []
+            for qurl in event.mimeData().urls():
+                raw_values.append(qurl.toLocalFile() if qurl.isLocalFile() else qurl.toString())
+            if self.on_external_drop(raw_values, target_index, indicator):
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+            return
+
+        # 内部DnD：並び替え/階層移動（既存処理）
+        source_index = self.currentIndex()
         if self.on_drop_move(source_index, target_index, indicator):
             event.acceptProposedAction()
         else:
@@ -117,7 +152,7 @@ class MainWindow(QMainWindow):
         self.resize(1000, 650)
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
 
-        self.tree = DragDropTreeView(self.handle_tree_drop)
+        self.tree = DragDropTreeView(self.handle_tree_drop, self.handle_external_drop)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_context_menu)
         self.tree.doubleClicked.connect(self.on_tree_double_clicked)
@@ -271,7 +306,9 @@ class MainWindow(QMainWindow):
 
             target_candidate = node.target
             if new_type in {"path", "url"} and not target_candidate.strip():
-                target_candidate, ok_target = QInputDialog.getText(self, "Target required", "target:", text=target_candidate)
+                target_candidate, ok_target = QInputDialog.getText(
+                    self, "Target required", "target:", text=target_candidate
+                )
                 if not ok_target:
                     return
 
@@ -500,6 +537,32 @@ class MainWindow(QMainWindow):
         if indicator == QAbstractItemView.DropIndicatorPosition.BelowItem:
             row += 1
         return parent_node, row
+
+    def handle_external_drop(self, raw_values: list[str], target_proxy_index, indicator) -> bool:
+        return bool(self.safe_call(self._handle_external_drop, raw_values, target_proxy_index, indicator))
+
+    def _handle_external_drop(self, raw_values: list[str], target_proxy_index, indicator) -> bool:
+        entries = build_drop_entries(raw_values)
+        if not entries:
+            return False
+
+        target_index = self.map_to_source(target_proxy_index)
+        dest_parent, dest_row = self._parent_node_and_row_for_drop(target_index, indicator)
+
+        # group配下 or root直下に追加可（rootはtypeがgroupじゃない可能性があるため特別扱い）
+        if dest_parent is not self.root and dest_parent.type != "group":
+            return False
+
+        for offset, entry in enumerate(entries):
+            node = Node.make(name=entry.name, node_type=entry.item_type, target=entry.target)
+            dest_parent.children.insert(dest_row + offset, node)
+
+        self.source_model.rebuild()
+        self.proxy_model.set_query(self.search_box.text())
+        self.tree.expandAll()
+        self.persist()
+        logging.info("Imported %d external drop entries", len(entries))
+        return True
 
     def handle_tree_drop(self, source_proxy_index, target_proxy_index, indicator) -> bool:
         if self.search_box.text().strip():

@@ -2,15 +2,70 @@
 
 from __future__ import annotations
 
-from pathlib import PurePath
+from pathlib import Path, PurePath
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QStandardItem, QStandardItemModel
+from PyQt6.QtCore import QFileInfo, Qt
+from PyQt6.QtGui import QIcon, QStandardItem, QStandardItemModel
+from PyQt6.QtWidgets import QApplication, QFileIconProvider, QStyle, QStyleFactory
 
 from .domain import Node
+from .icon_logic import icon_category_for_node
 
 
 NODE_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+class IconResolver:
+    def __init__(self):
+        self._cache: dict[str, QIcon] = {}
+        self._provider = QFileIconProvider()
+
+    def icon_for_node(self, node: Node) -> QIcon:
+        category = icon_category_for_node(node)
+
+        if category == "path_exe":
+            target = (node.target or "").strip()
+            cache_key = f"exe::{target}"
+            if cache_key in self._cache:
+                return self._cache[cache_key]
+            icon = self._icon_from_path_or_fallback(
+                target, self._style_icon(QStyle.StandardPixmap.SP_ComputerIcon)
+            )
+            self._cache[cache_key] = icon
+            return icon
+
+        cache_key = f"cat::{category}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        if category in {"group", "path_folder"}:
+            icon = self._style_icon(QStyle.StandardPixmap.SP_DirIcon)
+        elif category == "url":
+            icon = self._style_icon(QStyle.StandardPixmap.SP_DriveNetIcon)
+        elif category == "path_file":
+            icon = self._style_icon(QStyle.StandardPixmap.SP_FileIcon)
+        elif category == "separator":
+            icon = QIcon()
+        else:
+            icon = self._style_icon(QStyle.StandardPixmap.SP_FileIcon)
+
+        self._cache[cache_key] = icon
+        return icon
+
+    def _style_icon(self, pixmap: QStyle.StandardPixmap) -> QIcon:
+        app = QApplication.instance()
+        style = app.style() if app is not None else QStyleFactory.create("Fusion")
+        return style.standardIcon(pixmap) if style is not None else QIcon()
+
+    def _icon_from_path_or_fallback(self, raw_path: str, fallback: QIcon) -> QIcon:
+        try:
+            if raw_path and Path(raw_path).exists():
+                icon = self._provider.icon(QFileInfo(raw_path))
+                if not icon.isNull():
+                    return icon
+        except Exception:
+            pass
+        return fallback
 
 
 def display_name_for_node(node: Node) -> str:
@@ -36,6 +91,7 @@ class LauncherTreeModel(QStandardItemModel):
     def __init__(self, root: Node):
         super().__init__()
         self.root_node = root
+        self.icon_resolver = IconResolver()
         self.setHorizontalHeaderLabels(["Launch Tree"])
         self.rebuild()
 
@@ -51,6 +107,7 @@ class LauncherTreeModel(QStandardItemModel):
         item = QStandardItem(display_name_for_node(node))
         item.setEditable(False)
         item.setData(node, NODE_ROLE)
+        item.setIcon(self.icon_resolver.icon_for_node(node))
         if node.target:
             item.setToolTip(node.target)
         for child in node.children:

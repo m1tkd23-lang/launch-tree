@@ -88,3 +88,19 @@ python apps/main.py  # apps/main.py が <repo>/src を sys.path に追加して�
   - `path/url` は `target` 必須
   - `target` は `group/separator` では編集不可
 - 編集確定後はツリー表示・内部データに反映し、`data/launcher.json` と `.bak` へ保存
+
+## 外部ドラッグ&ドロップ登録（v1-x）
+
+- エクスプローラ等からファイル/フォルダをツリーへドロップすると `type=path` として登録
+- `http/https` URL をドロップした場合は `type=url` として登録
+- `.url` ファイルをドロップした場合は中身 (`URL=`) を解析し、取得できれば `type=url` として登録（失敗時は `type=path`）
+- 追加先ルールは通常の追加と同様（group子 / item・separatorの直後 / 空白はroot直下）
+- 追加後は `data/launcher.json` と `data/launcher.json.bak` に保存
+
+
+## ツリーアイコン（v1-y）
+
+- group/path/url はツリーで自動アイコン表示（外部画像ファイルは不要）
+- path の `.exe` は環境依存で実アイコン取得を試み、失敗時は標準アイコンへフォールバック
+- アイコンは表示専用で、JSONデータ（name/target）には影響しない
+
