@@ -6,7 +6,7 @@ from PyQt6.QtCore import QSortFilterProxyModel
 
 from .domain import Node
 from .filter_logic import compute_visible_node_ids
-from .model_qt import NODE_ROLE
+from .model_qt import NODE_ROLE, VirtualNode
 
 
 class TreeFilterProxyModel(QSortFilterProxyModel):
@@ -26,6 +26,16 @@ class TreeFilterProxyModel(QSortFilterProxyModel):
         if not index.isValid():
             return False
         node = index.data(NODE_ROLE)
+        if isinstance(node, VirtualNode):
+            if not self.query.strip():
+                return True
+            # 検索時は、仮想ノード名ヒット or 子が表示対象なら表示
+            if self.query.strip().lower() in node.name.lower():
+                return True
+            for row in range(self.sourceModel().rowCount(index)):
+                if self.filterAcceptsRow(row, index):
+                    return True
+            return False
         if not isinstance(node, Node):
             return False
         return node.id in self.visible_ids

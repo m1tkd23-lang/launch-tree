@@ -19,6 +19,36 @@ py -3.12 -m venv .venv
 python .\apps\main.py
 
 
+A. codex に作業してもらう（あなたがやること）
+1) ローカルを開発ブランチにして最新化
+git checkout codex-work
+git fetch origin --prune
+git pull
+
+これで「手元の codex-work = リモートの codex-work」に揃う。
+
+2) 変更が入ったら動作確認
+python apps/main.py
+pytest
+B. 安定版 main へ取り込む（リリース前の儀式）
+3) main を最新化
+git checkout main
+git pull
+4) codex-work を main に統合
+
+やり方は2択。おすすめは merge（履歴が分かりやすい）。
+
+方式1：merge（おすすめ）
+git merge codex-work
+
+コンフリクトが出たら直す → git add → git commit
+
+コンフリクトが無ければそのままマージコミットができる
+
+
+
+
+
 
 
 ### AI（設計補助・実装支援）への運用ルール 
