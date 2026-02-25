@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path, PurePath
+from pathlib import Path
 
 from PyQt6.QtCore import QFileInfo, Qt
 from PyQt6.QtGui import QIcon, QStandardItem, QStandardItemModel
@@ -87,18 +87,11 @@ def display_name_for_node(node: Node | VirtualNode) -> str:
     if isinstance(node, VirtualNode):
         return node.name
     if node.type == "group":
-        return f"📁 {node.name}"
+        return node.name
     if node.type == "url":
-        return f"🌐 {node.name}"
+        return node.name
     if node.type == "path":
-        target = (node.target or "").strip()
-        suffix = PurePath(target).suffix.lower()
-        if suffix == ".exe":
-            return f"⚙️ {node.name}"
-        looks_folder = target.endswith("/") or target.endswith("\\") or suffix == ""
-        if looks_folder:
-            return f"🗂️ {node.name}"
-        return f"📄 {node.name}"
+        return node.name
     if node.type == "separator":
         return "—"
     return node.name
