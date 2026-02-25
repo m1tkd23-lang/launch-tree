@@ -18,7 +18,12 @@ class TreeFilterProxyModel(QSortFilterProxyModel):
 
     def set_query(self, query: str) -> None:
         self.query = query
-        self.visible_ids = compute_visible_node_ids(self.root, query)
+        self.visible_ids = compute_visible_node_ids(self.root, self.query)
+        self.invalidateFilter()
+
+    def refresh_for_tree_change(self) -> None:
+        """Recompute visible ids from the current tree after structural changes."""
+        self.visible_ids = compute_visible_node_ids(self.root, self.query)
         self.invalidateFilter()
 
     def filterAcceptsRow(self, source_row: int, source_parent):

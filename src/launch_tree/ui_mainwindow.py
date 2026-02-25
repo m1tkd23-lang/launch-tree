@@ -274,12 +274,48 @@ class MainWindow(QMainWindow):
         if idx >= 0:
             self.view_mode_combo.setCurrentIndex(idx)
 
-    def _refresh_tree_model(self, expand: bool = False) -> None:
+    def _refresh_tree_model(self, expand: bool = False, preferred_selected_id: str | None = None) -> None:
         self.source_model.set_view_state(self.user_state, self.view_mode)
         self.source_model.rebuild()
         self.proxy_model.set_query(self.search_box.text())
         if expand:
             self.tree.expandAll()
+        self._ensure_node_visible(preferred_selected_id)
+
+    def _source_index_for_node_id(self, node_id: str | None):
+        if not node_id:
+            return QModelIndex()
+
+        def walk(parent_index):
+            rows = self.source_model.rowCount(parent_index)
+            for row in range(rows):
+                idx = self.source_model.index(row, 0, parent_index)
+                node = self._node_from_source_index(idx)
+                if isinstance(node, Node) and node.id == node_id:
+                    return idx
+                child_match = walk(idx)
+                if child_match.isValid():
+                    return child_match
+            return QModelIndex()
+
+        return walk(QModelIndex())
+
+    def _ensure_node_visible(self, node_id: str | None) -> None:
+        source_index = self._source_index_for_node_id(node_id)
+        if not source_index.isValid():
+            return
+
+        proxy_index = self.proxy_model.mapFromSource(source_index)
+        if not proxy_index.isValid():
+            return
+
+        parent = proxy_index.parent()
+        while parent.isValid():
+            self.tree.expand(parent)
+            parent = parent.parent()
+
+        self.tree.setCurrentIndex(proxy_index)
+        self.tree.scrollTo(proxy_index, QAbstractItemView.ScrollHint.PositionAtCenter)
 
     def _save_user_state(self) -> None:
         save_user_state(self.user_state)
@@ -546,7 +582,8 @@ class MainWindow(QMainWindow):
         inserted = insert_relative_to_selection(self.root, self.current_selected_id(), node)
         if not inserted:
             return False
-        self._refresh_tree_model()
+        self._refresh_tree_model(preferred_selected_id=node.id)
+        self.proxy_model.refresh_for_tree_change()
         self.tree.expandAll()
         self.persist()
         return True
@@ -643,11 +680,15 @@ class MainWindow(QMainWindow):
         if dest_parent is not self.root and dest_parent.type != "group":
             return False
 
+        first_inserted_id: str | None = None
         for offset, entry in enumerate(entries):
             node = Node.make(name=entry.name, node_type=entry.item_type, target=entry.target)
+            if first_inserted_id is None:
+                first_inserted_id = node.id
             dest_parent.children.insert(dest_row + offset, node)
 
-        self._refresh_tree_model()
+        self._refresh_tree_model(preferred_selected_id=first_inserted_id)
+        self.proxy_model.refresh_for_tree_change()
         self.tree.expandAll()
         self.persist()
         logging.info("Imported %d external drop entries", len(entries))
@@ -679,7 +720,8 @@ class MainWindow(QMainWindow):
             logging.info("Rejected drag/drop move source=%s dest_parent=%s", source_node.id, dest_parent.id)
             return False
 
-        self._refresh_tree_model()
+        self._refresh_tree_model(preferred_selected_id=source_node.id)
+        self.proxy_model.refresh_for_tree_change()
         self.tree.expandAll()
         self.persist()
         return True
