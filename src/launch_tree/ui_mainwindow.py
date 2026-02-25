@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QComboBox,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -35,12 +36,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .domain import Node, insert_relative_to_selection, move_node
+from .domain import Node, find_node_ref, insert_relative_to_selection, move_node
 from .drop_import_logic import build_drop_entries
 from .edit_logic import ALLOWED_NODE_TYPES, apply_node_update
 from .model_filter import TreeFilterProxyModel
 from .model_qt import LauncherTreeModel, NODE_ROLE
-from .storage_json import JsonStorage
+from .storage_json import JsonStorage, load_user_state, save_user_state, set_user_state_path, update_recent
 
 
 class DragDropTreeView(QTreeView):
@@ -147,6 +148,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.storage = storage
         self.root = self.storage.load_tree()
+        set_user_state_path(self.storage.path.parent / "user_state.json")
+        self.user_state = load_user_state()
+        self.view_mode = str(self.user_state.get("ui", {}).get("view_mode") or "all")
+        if self.view_mode not in {"all", "favorites", "recent"}:
+            self.view_mode = "all"
 
         self.setWindowTitle("Launch Tree")
         self.resize(1000, 650)
@@ -167,6 +173,13 @@ class MainWindow(QMainWindow):
         self.search_box.textChanged.connect(self.on_search_changed)
         QShortcut(QKeySequence("Esc"), self.search_box, activated=self.search_box.clear)
 
+        self.view_mode_combo = QComboBox()
+        self.view_mode_combo.addItem("All", "all")
+        self.view_mode_combo.addItem("Favorites", "favorites")
+        self.view_mode_combo.addItem("Recent", "recent")
+        self._set_view_mode_combo(self.view_mode)
+        self.view_mode_combo.currentIndexChanged.connect(self.on_view_mode_changed)
+
         detail_panel = QWidget(objectName="detailPanel")
         detail_layout = QVBoxLayout(detail_panel)
         detail_layout.setContentsMargins(18, 18, 18, 18)
@@ -176,9 +189,13 @@ class MainWindow(QMainWindow):
         self.launch_button.clicked.connect(lambda: self.safe_call(self.launch_current))
         self.copy_target_button = QPushButton("Copy target")
         self.copy_target_button.clicked.connect(lambda: self.safe_call(self.copy_current_target))
+        self.favorite_button = QPushButton("★ Favorite")
+        self.favorite_button.setCheckable(True)
+        self.favorite_button.clicked.connect(lambda: self.safe_call(self.toggle_current_favorite))
 
         detail_layout.addWidget(self.launch_button)
         detail_layout.addWidget(self.copy_target_button)
+        detail_layout.addWidget(self.favorite_button)
 
         detail_card = QFrame(objectName="detailCard")
         card_layout = QVBoxLayout(detail_card)
@@ -226,11 +243,17 @@ class MainWindow(QMainWindow):
         main_layout.setSpacing(10)
         self.header = WindowHeader(self)
         main_layout.addWidget(self.header)
-        main_layout.addWidget(self.search_box)
+        search_row = QWidget()
+        search_layout = QHBoxLayout(search_row)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.addWidget(self.search_box, 1)
+        search_layout.addWidget(self.view_mode_combo)
+
+        main_layout.addWidget(search_row)
         main_layout.addWidget(splitter)
         self.setCentralWidget(central)
 
-        self.source_model = LauncherTreeModel(self.root)
+        self.source_model = LauncherTreeModel(self.root, self.user_state, self.view_mode)
         self.proxy_model = TreeFilterProxyModel(self.root)
         self.proxy_model.setSourceModel(self.source_model)
         self.tree.setModel(self.proxy_model)
@@ -245,6 +268,35 @@ class MainWindow(QMainWindow):
             logging.exception("UI operation failed")
             QMessageBox.critical(self, "Error", str(exc))
             return None
+
+    def _set_view_mode_combo(self, mode: str) -> None:
+        idx = self.view_mode_combo.findData(mode)
+        if idx >= 0:
+            self.view_mode_combo.setCurrentIndex(idx)
+
+    def _refresh_tree_model(self, expand: bool = False) -> None:
+        self.source_model.set_view_state(self.user_state, self.view_mode)
+        self.source_model.rebuild()
+        self.proxy_model.set_query(self.search_box.text())
+        if expand:
+            self.tree.expandAll()
+
+    def _save_user_state(self) -> None:
+        save_user_state(self.user_state)
+
+    def on_view_mode_changed(self) -> None:
+        selected_mode = str(self.view_mode_combo.currentData() or "all")
+        if selected_mode not in {"all", "favorites", "recent"}:
+            selected_mode = "all"
+        self.view_mode = selected_mode
+        ui_state = self.user_state.setdefault("ui", {})
+        if not isinstance(ui_state, dict):
+            self.user_state["ui"] = {"view_mode": self.view_mode}
+        else:
+            ui_state["view_mode"] = self.view_mode
+        self._save_user_state()
+        self._refresh_tree_model(expand=self.view_mode != "all")
+        self.update_detail()
 
     def on_search_changed(self, text: str) -> None:
         self.proxy_model.set_query(text)
@@ -281,12 +333,19 @@ class MainWindow(QMainWindow):
             return None, None
         return item, item.data(NODE_ROLE)
 
+    def _resolve_real_node(self, node) -> Node | None:
+        if isinstance(node, Node):
+            return node
+        return None
+
     def current_selected_id(self) -> str | None:
         _, node = self.current_item_and_node()
-        return node.id if isinstance(node, Node) else None
+        resolved = self._resolve_real_node(node)
+        return resolved.id if isinstance(resolved, Node) else None
 
     def edit_detail_field(self, field_name: str) -> None:
-        _, node = self.current_item_and_node()
+        _, selected = self.current_item_and_node()
+        node = self._resolve_real_node(selected)
         if node is None:
             return
 
@@ -359,15 +418,15 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Validation Error", error or "Invalid input")
             return False
 
-        self.source_model.rebuild()
-        self.proxy_model.set_query(self.search_box.text())
+        self._refresh_tree_model()
         self.persist()
         logging.info("Updated node id=%s name=%s type=%s target=%s", node.id, node.name, node.type, node.target)
         self.update_detail()
         return True
 
     def update_detail(self, *_):
-        _, node = self.current_item_and_node()
+        _, selected = self.current_item_and_node()
+        node = self._resolve_real_node(selected)
         if node is None:
             self.name_value.setText("-")
             self.type_value.setText("-")
@@ -377,6 +436,8 @@ class MainWindow(QMainWindow):
             self.target_value.setEnabled(False)
             self.launch_button.setEnabled(False)
             self.copy_target_button.setEnabled(False)
+            self.favorite_button.setEnabled(False)
+            self.favorite_button.setChecked(False)
             return
 
         self.name_value.setText(node.name)
@@ -394,14 +455,42 @@ class MainWindow(QMainWindow):
         launchable = self.can_launch_node(node)
         self.launch_button.setEnabled(launchable)
         self.copy_target_button.setEnabled(launchable)
+        favorite_capable = node.type in {"path", "url"}
+        self.favorite_button.setEnabled(favorite_capable)
+        is_favorite = bool(self.user_state.get("favorites", {}).get(node.id))
+        self.favorite_button.setChecked(is_favorite)
 
     def can_launch_node(self, node: Node | None) -> bool:
         return isinstance(node, Node) and node.type in {"path", "url"} and bool(node.target.strip())
 
+    def toggle_current_favorite(self) -> None:
+        _, selected = self.current_item_and_node()
+        node = self._resolve_real_node(selected)
+        if node is None or node.type not in {"path", "url"}:
+            return
+
+        favorites = self.user_state.setdefault("favorites", {})
+        if not isinstance(favorites, dict):
+            favorites = {}
+            self.user_state["favorites"] = favorites
+
+        if self.favorite_button.isChecked():
+            favorites[node.id] = True
+        else:
+            favorites.pop(node.id, None)
+
+        self._save_user_state()
+        self._refresh_tree_model()
+        self.update_detail()
+
+    def _record_recent(self, node_id: str) -> None:
+        self.user_state = update_recent(self.user_state, node_id)
+        self._save_user_state()
+
     def on_tree_double_clicked(self, proxy_index):
         source_index = self.map_to_source(proxy_index)
         item = self.source_model.itemFromIndex(source_index)
-        node = item.data(NODE_ROLE) if item is not None else None
+        node = self._resolve_real_node(item.data(NODE_ROLE) if item is not None else None)
         if self.can_launch_node(node):
             self.safe_call(self.launch_node, node)
 
@@ -413,7 +502,8 @@ class MainWindow(QMainWindow):
         if click_proxy_index.isValid():
             self.tree.setCurrentIndex(click_proxy_index)
 
-        _, node = self.current_item_and_node()
+        _, selected = self.current_item_and_node()
+        node = self._resolve_real_node(selected)
         launchable = self.can_launch_node(node)
 
         menu = QMenu(self)
@@ -456,8 +546,7 @@ class MainWindow(QMainWindow):
         inserted = insert_relative_to_selection(self.root, self.current_selected_id(), node)
         if not inserted:
             return False
-        self.source_model.rebuild()
-        self.proxy_model.set_query(self.search_box.text())
+        self._refresh_tree_model()
         self.tree.expandAll()
         self.persist()
         return True
@@ -510,7 +599,8 @@ class MainWindow(QMainWindow):
         if not source_index.isValid():
             return None
         item = self.source_model.itemFromIndex(source_index)
-        return item.data(NODE_ROLE) if item is not None else None
+        node = item.data(NODE_ROLE) if item is not None else None
+        return node if isinstance(node, Node) else None
 
     def _parent_node_and_row_for_drop(self, source_target_index, indicator) -> tuple[Node, int]:
         if not source_target_index.isValid() or indicator == QAbstractItemView.DropIndicatorPosition.OnViewport:
@@ -557,8 +647,7 @@ class MainWindow(QMainWindow):
             node = Node.make(name=entry.name, node_type=entry.item_type, target=entry.target)
             dest_parent.children.insert(dest_row + offset, node)
 
-        self.source_model.rebuild()
-        self.proxy_model.set_query(self.search_box.text())
+        self._refresh_tree_model()
         self.tree.expandAll()
         self.persist()
         logging.info("Imported %d external drop entries", len(entries))
@@ -590,19 +679,20 @@ class MainWindow(QMainWindow):
             logging.info("Rejected drag/drop move source=%s dest_parent=%s", source_node.id, dest_parent.id)
             return False
 
-        self.source_model.rebuild()
-        self.proxy_model.set_query(self.search_box.text())
+        self._refresh_tree_model()
         self.tree.expandAll()
         self.persist()
         return True
 
     def launch_current(self):
-        _, node = self.current_item_and_node()
+        _, selected = self.current_item_and_node()
+        node = self._resolve_real_node(selected)
         if self.can_launch_node(node):
             self.launch_node(node)
 
     def copy_current_target(self):
-        _, node = self.current_item_and_node()
+        _, selected = self.current_item_and_node()
+        node = self._resolve_real_node(selected)
         if not self.can_launch_node(node):
             return
         clipboard = QApplication.clipboard()
@@ -610,6 +700,9 @@ class MainWindow(QMainWindow):
             clipboard.setText(node.target)
 
     def launch_node(self, node: Node):
+        self._record_recent(node.id)
+        if self.view_mode in {"all", "recent"}:
+            self._refresh_tree_model()
         if node.type == "path":
             self._launch_path(node)
         elif node.type == "url":
@@ -649,19 +742,20 @@ class MainWindow(QMainWindow):
         self._insert_new_node(Node.make(name=name.strip(), node_type="group"))
 
     def rename_node(self):
-        _, node = self.current_item_and_node()
+        _, selected = self.current_item_and_node()
+        node = self._resolve_real_node(selected)
         if node is None:
             return
         name, ok = QInputDialog.getText(self, "Rename", "New name:", text=node.name)
         if not ok or not name.strip():
             return
         node.name = name.strip()
-        self.source_model.rebuild()
-        self.proxy_model.set_query(self.search_box.text())
+        self._refresh_tree_model()
         self.persist()
 
     def delete_node(self):
-        item, node = self.current_item_and_node()
+        item, selected = self.current_item_and_node()
+        node = self._resolve_real_node(selected)
         if node is None:
             return
 
@@ -674,14 +768,11 @@ class MainWindow(QMainWindow):
         if result != QMessageBox.StandardButton.Yes:
             return
 
-        parent_item = item.parent()
-        parent_node = self.root if parent_item is None else parent_item.data(NODE_ROLE)
-        if not isinstance(parent_node, Node):
-            parent_node = self.root
-
-        parent_node.children = [child for child in parent_node.children if child.id != node.id]
-        self.source_model.rebuild()
-        self.proxy_model.set_query(self.search_box.text())
+        node_ref = find_node_ref(self.root, node.id)
+        if node_ref is None or node_ref.parent is None:
+            return
+        node_ref.parent.children = [child for child in node_ref.parent.children if child.id != node.id]
+        self._refresh_tree_model()
         self.persist()
 
     def persist(self):

@@ -10,7 +10,7 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtWidgets import QApplication
 
 from launch_tree.domain import Node
-from launch_tree.storage_json import JsonStorage
+from launch_tree.storage_json import JsonStorage, load_user_state, set_user_state_path
 from launch_tree.ui_mainwindow import MainWindow
 
 
@@ -73,3 +73,31 @@ def test_launch_invalid_url_shows_error(window, monkeypatch):
     window.safe_call(window.launch_node, bad)
 
     assert errors
+
+
+def test_recent_updated_even_when_launch_fails(window):
+    set_user_state_path(window.storage.path.parent / "user_state.json")
+
+    missing = Node(id="n4", name="missing", type="path", target="/not/found", children=[])
+    window.safe_call(window.launch_node, missing)
+
+    state = load_user_state()
+    assert state["recent"][0]["id"] == "n4"
+
+
+def test_recent_updated_on_context_launch(window, monkeypatch):
+    set_user_state_path(window.storage.path.parent / "user_state.json")
+    called = {}
+
+    def fake_open_url(url):
+        called["url"] = url.toString()
+        return True
+
+    monkeypatch.setattr("launch_tree.ui_mainwindow.QDesktopServices.openUrl", fake_open_url)
+
+    good = Node(id="n5", name="good", type="url", target="https://example.com", children=[])
+    window.launch_node(good)
+
+    state = load_user_state()
+    assert called["url"] == "https://example.com"
+    assert state["recent"][0]["id"] == "n5"
