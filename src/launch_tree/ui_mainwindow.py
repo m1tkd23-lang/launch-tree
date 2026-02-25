@@ -180,6 +180,12 @@ class MainWindow(QMainWindow):
         self._set_view_mode_combo(self.view_mode)
         self.view_mode_combo.currentIndexChanged.connect(self.on_view_mode_changed)
 
+        self.expand_all_button = QPushButton("Expand all")
+        self.expand_all_button.clicked.connect(lambda: self.safe_call(self.expand_all_nodes))
+
+        self.collapse_all_button = QPushButton("Collapse all")
+        self.collapse_all_button.clicked.connect(lambda: self.safe_call(self.collapse_all_nodes))
+
         detail_panel = QWidget(objectName="detailPanel")
         detail_layout = QVBoxLayout(detail_panel)
         detail_layout.setContentsMargins(18, 18, 18, 18)
@@ -247,6 +253,8 @@ class MainWindow(QMainWindow):
         search_layout = QHBoxLayout(search_row)
         search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.addWidget(self.search_box, 1)
+        search_layout.addWidget(self.expand_all_button)
+        search_layout.addWidget(self.collapse_all_button)
         search_layout.addWidget(self.view_mode_combo)
 
         main_layout.addWidget(search_row)
@@ -304,6 +312,12 @@ class MainWindow(QMainWindow):
             self.expand_search_matches()
         else:
             self.tree.collapseAll()
+
+    def expand_all_nodes(self) -> None:
+        self.tree.expandAll()
+
+    def collapse_all_nodes(self) -> None:
+        self.tree.collapseAll()
 
     def expand_search_matches(self) -> None:
         def visit(parent_index):
