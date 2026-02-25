@@ -593,6 +593,8 @@ class MainWindow(QMainWindow):
         if not inserted:
             return False
         self._refresh_tree_model(preferred_selected_id=node.id)
+
+        codex-work
         self.tree.expandAll()
         self.persist()
         return True
@@ -719,6 +721,8 @@ class MainWindow(QMainWindow):
             dest_parent.children.insert(dest_row + offset, node)
 
         self._refresh_tree_model(preferred_selected_id=first_inserted_id)
+
+        codex-work
         self.tree.expandAll()
         self.persist()
         logging.info("Imported %d external drop entries", len(entries))
@@ -762,6 +766,8 @@ class MainWindow(QMainWindow):
             return False
 
         self._refresh_tree_model(preferred_selected_id=source_node.id)
+
+        codex-work
         self.tree.expandAll()
         self.persist()
         return True

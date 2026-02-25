@@ -70,22 +70,4 @@ def test_refresh_for_tree_change_recomputes_query_visibility(window):
     assert source_index.isValid()
     assert not window.proxy_model.mapFromSource(source_index).isValid()
 
-
-def test_refresh_tree_model_calls_proxy_refresh(window, monkeypatch):
-    called = {"count": 0}
-
-    original = window.proxy_model.refresh_for_tree_change
-
-    def wrapped():
-        called["count"] += 1
-        return original()
-
-    monkeypatch.setattr(window.proxy_model, "refresh_for_tree_change", wrapped)
-    window._refresh_tree_model(preferred_selected_id="x")
-
-    assert called["count"] == 1
-
-
-def test_expand_and_collapse_buttons_exist(window):
-    assert window.expand_all_button.text() == "Expand all"
-    assert window.collapse_all_button.text() == "Collapse all"
+    codex-work
