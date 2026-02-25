@@ -1,187 +1,105 @@
-# Tree Launcher (Windows Desktop) - SPEC (PyQt6)
+# SPEC.md
 
-## 1. Goal
-Windows上で、アプリ/ファイル/フォルダ/URL をツリー構造で整理し、
-ダブルクリック等で起動できるデスクトップランチャーを作る。
-ツリーの並び替え・階層移動はドラッグ&ドロップで自由に行える。
-UIデザインは段階的に改善できる設計とする（v1は機能優先）。
-
-## 2. Target
+## 1. 対象環境
 - OS: Windows 10 / 11
-- UI: PyQt6
+- 言語: Python 3.x
+- GUI: PyQt6
 
-## 3. Non-goals (v1ではやらない)
-- クラウド同期
-- 複数端末での共有
-- アカウント/権限
-- 監視（フォルダの自動同期）や自動更新
-- タスクトレイ常駐（v2以降）
-- アイコン自動抽出の完全対応（v1では任意/簡易）
+## 2. アーキテクチャ方針
+- リポジトリ構成は `apps/`, `src/`, `tests/` を維持する。
+- src レイアウトを採用し、起動時は `apps/main.py` が `<repo>/src` を `sys.path` に追加してから `launch_tree` パッケージを import する。
+- エントリポイントは `apps/main.py` とし、起動処理の実体は `launch_tree.core` 側に置く。
 
-## 4. Terminology
-- Node: ツリーの1要素
-- Group: 子を持てるノード
-- Item: 起動対象を持つノード（path/url）
-- Separator: 区切り表示用ノード
+## 3. 画面仕様（v1系）
+- メインウィンドウは `QMainWindow`。
+- 左ペイン: ツリー (`QTreeView`)。
+- 右ペイン: 詳細ペイン（選択ノードの `name` / `type` / `target` を表示）。
 
-## 5. Functional Requirements
+## 4. データモデル
+- ノードは以下の属性を持つ:
+  - `id`
+  - `name`
+  - `type`
+  - `target`
+  - `children`
+- ルートは `group` タイプのノードとして扱う。
 
-### 5.1 Tree UI
-- 1ウィンドウ構成
-- 左ペイン：ツリー表示
-- 右ペイン：詳細（選択ノードの情報表示）
-- ノードは展開/折りたたみできる
+## 5. 編集方針（右クリック操作）
+- 編集操作は右クリックメニュー + ダイアログベースで行う。
+- 最低限の編集機能:
+  - `Add Group`
+    - 選択ノードが `group` の場合は子として追加
+    - 選択ノードが `item/path/url` の場合は同階層に追加
+  - `Rename`（入力ダイアログ）
+  - `Delete`（確認ダイアログ）
 
-推奨実装：
-- QTreeView + モデル（QStandardItemModel か custom model）
+## 6. 永続化仕様
+- 保存形式: JSON
+- メイン保存先: `data/launcher.json`
+- バックアップ: `data/launcher.json.bak`
+- 読み込み時のフォールバック順:
+  1. `data/launcher.json`
+  2. `data/launcher.json.bak`
+  3. どちらも失敗時は空ルートで起動
+- ノード変更が発生するたびに `launcher.json` と `.bak` の両方を更新する。
 
-### 5.2 Node Types
-- group: 子を持てる（children）
-- path: target = Windowsパス（exe, file, folder いずれも可）
-- url: target = URL
-- separator: 表示用。targetなし。起動不可。
+## 7. 起動機能（v1-2）
+- 起動対象は `type=path` と `type=url`。
+- 実行トリガー:
+  - ツリーのダブルクリック
+  - 右クリックメニュー `Launch`
+- 補助操作:
+  - 右クリックメニュー `Copy target`
+- ノード種別制御:
+  - `group` / `separator` 等、`path/url` 以外では `Launch` / `Copy target` は無効
 
-共通フィールド：
-- id: 一意（UUID推奨）
-- name: 表示名
-- type: group/path/url/separator
-- target: path or url のみ
-- meta: 追加情報（将来拡張用。v1は空で可）
-  - icon_path（任意、v2以降の拡張用）
-  - hotkey（任意、v2以降の拡張用）
+### 7.1 type=path
+- Windows 既定の方法として `os.startfile(target)` を使う。
+- `target` が存在しない、または起動に失敗した場合:
+  - エラーダイアログを表示
+  - 例外詳細を `logs/app.log` に記録
 
-### 5.3 Launch Action
-起動の基本仕様：
-- path:
-  - folder -> Explorerで開く
-  - file/exe -> 既定の関連付け or 実行で開く
-- url:
-  - 既定ブラウザで開く
+### 7.2 type=url
+- `QDesktopServices.openUrl(QUrl(target))` で既定ブラウザ起動。
+- `QUrl.isValid()` 等で最低限の妥当性確認を行う。
+- 不正 URL / 起動失敗時:
+  - エラーダイアログを表示
+  - 例外詳細を `logs/app.log` に記録
 
-v1の実装方針（Windows）：
-- path は os.startfile(target) を第一候補
-- url は QDesktopServices.openUrl(QUrl(target)) を利用
+## 8. 検索仕様（v1-7: フィルター）
+- 検索はハイライトではなく、**フィルター（非表示）**方式を採用する。
+- マッチ条件は `name` / `target` / `type` の部分一致（case-insensitive）。
+- `item/path/url` は自身がマッチすれば表示。
+- `group` は子孫に1つでもマッチがあれば表示。
+- `separator` は同階層に表示対象（separator以外）がある場合のみ表示。
+- 検索中は一致結果が見えるよう必要な枝を自動展開する。
+- 検索クリア時は折りたたみ状態に戻す。
 
-失敗時：
-- エラーダイアログを表示（例外でアプリが落ちない）
-- ログに詳細を書き込む
+## 9. Drag & Drop（v1-3）
+- 同階層内での並び替えに対応。
+- 別グループへの移動に対応。
+- drop先が `group` の場合はその子へ挿入。
+- drop先が `item` / `separator` の場合は同階層に挿入。
+- root 直下へのドロップを許可。
+- 循環防止のため、以下を禁止:
+  - 自分自身へのドロップ
+  - 子孫配下へのドロップ
+- `group` 以外は親（children保持先）になれない。
 
-### 5.4 Context Menu (右クリック)
-ツリー上で右クリックメニューを提供する：
-- Add Group
-- Add Path Item（ファイル選択 / フォルダ選択）
-- Add URL Item（入力ダイアログ）
-- Add Separator
-- Rename
-- Delete（確認ダイアログあり）
-- Launch（起動可能なノードのみ）
-- Copy target（path/url のみ）
 
-### 5.5 Drag & Drop Reorder
-- 同一階層内の並び替えが可能
-- 別グループ配下への移動が可能
-- 禁止：
-  - 自分の子孫にドロップ（循環）
-- ドロップ規則：
-  - group にドロップ → 子として入る
-  - item/separator にドロップ → 同階層の前後に挿入
 
-モデル更新後は即保存（または一定間隔で保存）する。
+## 9.5 ターゲット登録（v1-4）
+- 右クリックメニューから `path/url/separator` ノード追加に対応。
+- `path` はファイル選択/フォルダ選択で target を設定。
+- `url` は入力ダイアログで target を設定し、空文字はキャンセル。
+- URL は `http/https` を推奨し、他スキーム時は警告確認を挟む。
+- 挿入ルール:
+  - 選択が `group`: 子として追加
+  - 選択が `item/separator`: 同階層の直後に追加
+  - 未選択: root 直下に追加
+- 追加後は JSON と .bak を更新する。
 
-### 5.6 Persistence (Save/Load)
-v1: JSON ファイルで保存する（単一ファイル）
-- path: data/launcher.json
-- backup: data/launcher.json.bak（保存時に更新）
-
-読み込みフロー：
-1) launcher.json を読む
-2) 失敗したら launcher.json.bak を読む
-3) それも失敗したら初期データで起動（空ツリー）
-
-保存タイミング（v1）：
-- 変更が発生するたびに保存（Add/Rename/Delete/DnD）
-- 保存失敗はダイアログ + ログ（アプリは継続）
-
-※ 将来拡張：
-- v2で SQLite へ移行可能なように storage 層を分離
-
-### 5.7 Search / Filter (v1.1 以降候補)
-- 上部に検索ボックスを設置
-- 入力文字列でノードをフィルタ or ハイライト（どちらか）
-※ v1ではUI枠だけ用意して未実装でも可
-
-## 6. Non-functional Requirements
-- 起動が速い（目標：1秒台）
-- 落ちない（例外ハンドリング）
-- ログ出力（logs/app.log）
-- UIとデータモデル/永続化を分離し、後からデザイン変更しやすい構造
-
-## 7. Data Model (JSON)
-Example:
-{
-  "version": 1,
-  "root": {
-    "id": "root",
-    "name": "Launcher",
-    "type": "group",
-    "children": [
-      {
-        "id": "g1",
-        "name": "CAM",
-        "type": "group",
-        "children": [
-          {"id": "i1", "name": "hyperMILL", "type": "path", "target": "C:\\Apps\\hyperMILL\\hm.exe"},
-          {"id": "u1", "name": "社内Wiki", "type": "url", "target": "https://example.com"}
-        ]
-      }
-    ]
-  }
-}
-
-Rules:
-- group only: has children
-- separator: no target
-- id unique
-
-## 8. Keyboard Shortcuts (v1)
-- Enter: Launch selected (path/url only)
-- Del: Delete selected (confirm)
-- F2: Rename selected
-- Ctrl+N: Add Group (optional)
-- Ctrl+L: Focus search (v1.1)
-
-## 9. Acceptance Criteria (Definition of Done)
-- PyQt6アプリとして起動し、ツリーが表示される
-- group/path/url/separator の追加が右クリックからできる
-- path/url はダブルクリックで起動できる
-- D&Dで並び替え＆階層移動ができる（循環は禁止）
-- 変更がJSONに保存され、再起動しても再現される
-- JSON破損時に .bak から復旧を試みる
-- 失敗時に落ちず、エラー表示＋ログ出力される
-
-## 10. Suggested Project Structure
-/apps
-  - launcher_gui.py          # entrypoint
-/src/launcher
-  - domain.py                # Node dataclass / types
-  - model_qt.py              # QAbstractItemModel or QStandardItemModel wrapper
-  - storage_json.py          # load/save + backup
-  - actions.py               # launch logic (path/url)
-  - ui_mainwindow.py         # QMainWindow + widgets
-  - ui_menus.py              # context menu builder
-  - logging_setup.py         # app.log setup
-/data
-  - launcher.json
-  - launcher.json.bak
-/logs
-  - app.log
-
-## 11. Run
-- python -m venv .venv
-- .venv\Scripts\activate
-- pip install -r requirements.txt
-- python apps/launcher_gui.py
-
-## 12. Packaging (later)
-- PyInstaller onedir を想定（v1.1〜）
-- internal 依存物の扱いは README に明記
+## 10. 例外/ログ方針
+- 例外でアプリを落とさない。
+- 主要イベント（起動、保存、例外）を `logs/app.log` に記録する。
+- ユーザーに必要な失敗はダイアログ表示する。
