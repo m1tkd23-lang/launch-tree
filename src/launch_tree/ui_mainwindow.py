@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from PyQt6.QtCore import QModelIndex, QPoint, Qt, QUrl, pyqtSignal
@@ -40,8 +41,15 @@ from .domain import Node, find_node_ref, insert_relative_to_selection, move_node
 from .drop_import_logic import build_drop_entries
 from .edit_logic import ALLOWED_NODE_TYPES, apply_node_update
 from .model_filter import TreeFilterProxyModel
-from .model_qt import LauncherTreeModel, NODE_ROLE
+from .model_qt import LauncherTreeModel, NODE_ROLE, VirtualNode
 from .storage_json import JsonStorage, load_user_state, save_user_state, set_user_state_path, update_recent
+
+
+@dataclass
+class TreeViewState:
+    expanded_ids: set[str]
+    selected_id: str | None
+    scroll_value: int
 
 
 class DragDropTreeView(QTreeView):
@@ -180,6 +188,12 @@ class MainWindow(QMainWindow):
         self._set_view_mode_combo(self.view_mode)
         self.view_mode_combo.currentIndexChanged.connect(self.on_view_mode_changed)
 
+        self.expand_all_button = QPushButton("Expand all")
+        self.expand_all_button.clicked.connect(lambda: self.safe_call(self.expand_all_nodes))
+
+        self.collapse_all_button = QPushButton("Collapse all")
+        self.collapse_all_button.clicked.connect(lambda: self.safe_call(self.collapse_all_nodes))
+
         detail_panel = QWidget(objectName="detailPanel")
         detail_layout = QVBoxLayout(detail_panel)
         detail_layout.setContentsMargins(18, 18, 18, 18)
@@ -247,6 +261,8 @@ class MainWindow(QMainWindow):
         search_layout = QHBoxLayout(search_row)
         search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.addWidget(self.search_box, 1)
+        search_layout.addWidget(self.expand_all_button)
+        search_layout.addWidget(self.collapse_all_button)
         search_layout.addWidget(self.view_mode_combo)
 
         main_layout.addWidget(search_row)
@@ -274,12 +290,21 @@ class MainWindow(QMainWindow):
         if idx >= 0:
             self.view_mode_combo.setCurrentIndex(idx)
 
-    def _refresh_tree_model(self, expand: bool = False) -> None:
+    def _refresh_tree_model(
+        self,
+        *,
+        expand: bool = False,
+        preserve_state: bool = True,
+        preferred_selected_id: str | None = None,
+    ) -> None:
+        state = self._capture_tree_state() if preserve_state else None
         self.source_model.set_view_state(self.user_state, self.view_mode)
         self.source_model.rebuild()
         self.proxy_model.set_query(self.search_box.text())
         if expand:
             self.tree.expandAll()
+        if state is not None:
+            self._restore_tree_state(state, preferred_selected_id=preferred_selected_id)
 
     def _save_user_state(self) -> None:
         save_user_state(self.user_state)
@@ -305,6 +330,12 @@ class MainWindow(QMainWindow):
         else:
             self.tree.collapseAll()
 
+    def expand_all_nodes(self) -> None:
+        self.tree.expandAll()
+
+    def collapse_all_nodes(self) -> None:
+        self.tree.collapseAll()
+
     def expand_search_matches(self) -> None:
         def visit(parent_index):
             row_count = self.proxy_model.rowCount(parent_index)
@@ -320,6 +351,78 @@ class MainWindow(QMainWindow):
         if not index.isValid():
             return index
         return self.proxy_model.mapToSource(index)
+
+    def _node_id_from_source_index(self, source_index) -> str | None:
+        if not source_index.isValid():
+            return None
+        item = self.source_model.itemFromIndex(source_index)
+        if item is None:
+            return None
+        node = item.data(NODE_ROLE)
+        if isinstance(node, (Node, VirtualNode)):
+            return node.id
+        return None
+
+    def _node_id_from_proxy_index(self, proxy_index) -> str | None:
+        source_index = self.map_to_source(proxy_index)
+        return self._node_id_from_source_index(source_index)
+
+    def _collect_proxy_node_indexes(self) -> dict[str, QModelIndex]:
+        indexes: dict[str, QModelIndex] = {}
+
+        def visit(parent_index: QModelIndex) -> None:
+            row_count = self.proxy_model.rowCount(parent_index)
+            for row in range(row_count):
+                idx = self.proxy_model.index(row, 0, parent_index)
+                node_id = self._node_id_from_proxy_index(idx)
+                if node_id is not None:
+                    indexes[node_id] = idx
+                visit(idx)
+
+        visit(QModelIndex())
+        return indexes
+
+    def _capture_tree_state(self) -> TreeViewState:
+        expanded_ids: set[str] = set()
+
+        def visit(parent_index: QModelIndex) -> None:
+            row_count = self.proxy_model.rowCount(parent_index)
+            for row in range(row_count):
+                idx = self.proxy_model.index(row, 0, parent_index)
+                if self.tree.isExpanded(idx):
+                    node_id = self._node_id_from_proxy_index(idx)
+                    if node_id is not None:
+                        expanded_ids.add(node_id)
+                visit(idx)
+
+        visit(QModelIndex())
+        selected_id = self._node_id_from_proxy_index(self.tree.currentIndex())
+        scroll_value = self.tree.verticalScrollBar().value()
+        return TreeViewState(expanded_ids=expanded_ids, selected_id=selected_id, scroll_value=scroll_value)
+
+    def _restore_tree_state(self, state: TreeViewState, preferred_selected_id: str | None = None) -> None:
+        id_to_index = self._collect_proxy_node_indexes()
+
+        def depth(index: QModelIndex) -> int:
+            level = 0
+            current = index.parent()
+            while current.isValid():
+                level += 1
+                current = current.parent()
+            return level
+
+        for node_id in sorted(state.expanded_ids, key=lambda value: depth(id_to_index.get(value, QModelIndex()))):
+            idx = id_to_index.get(node_id)
+            if idx is not None and idx.isValid():
+                self.tree.expand(idx)
+
+        selected_id = preferred_selected_id or state.selected_id
+        if selected_id is not None:
+            idx = id_to_index.get(selected_id)
+            if idx is not None and idx.isValid():
+                self.tree.setCurrentIndex(idx)
+
+        self.tree.verticalScrollBar().setValue(state.scroll_value)
 
     def current_item_and_node(self):
         proxy_index = self.tree.currentIndex()
@@ -546,8 +649,7 @@ class MainWindow(QMainWindow):
         inserted = insert_relative_to_selection(self.root, self.current_selected_id(), node)
         if not inserted:
             return False
-        self._refresh_tree_model()
-        self.tree.expandAll()
+        self._refresh_tree_model(preferred_selected_id=node.id)
         self.persist()
         return True
 
@@ -648,7 +750,6 @@ class MainWindow(QMainWindow):
             dest_parent.children.insert(dest_row + offset, node)
 
         self._refresh_tree_model()
-        self.tree.expandAll()
         self.persist()
         logging.info("Imported %d external drop entries", len(entries))
         return True
@@ -680,7 +781,6 @@ class MainWindow(QMainWindow):
             return False
 
         self._refresh_tree_model()
-        self.tree.expandAll()
         self.persist()
         return True
 
@@ -754,7 +854,7 @@ class MainWindow(QMainWindow):
         self.persist()
 
     def delete_node(self):
-        item, selected = self.current_item_and_node()
+        _, selected = self.current_item_and_node()
         node = self._resolve_real_node(selected)
         if node is None:
             return
@@ -771,8 +871,9 @@ class MainWindow(QMainWindow):
         node_ref = find_node_ref(self.root, node.id)
         if node_ref is None or node_ref.parent is None:
             return
+        fallback_selected_id = node_ref.parent.id
         node_ref.parent.children = [child for child in node_ref.parent.children if child.id != node.id]
-        self._refresh_tree_model()
+        self._refresh_tree_model(preferred_selected_id=fallback_selected_id)
         self.persist()
 
     def persist(self):
