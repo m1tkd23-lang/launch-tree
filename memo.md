@@ -46,6 +46,8 @@ git merge codex-work
 コンフリクトが無ければそのままマージコミットができる
 
 
+#exe化
+pyinstaller .\launch-tree.spec --clean
 
 
 

@@ -30,3 +30,4 @@ Thumbs.db
 # local user data
 /data/launcher.json
 /data/launcher.json.bak
+/data/user_state.json
