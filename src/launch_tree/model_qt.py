@@ -122,11 +122,11 @@ class LauncherTreeModel(QStandardItemModel):
         self._collect_lookup(self.root_node)
 
         if self.view_mode in {"all", "favorites"}:
-            fav_item = self._virtual_group_item("virtual:favorites", "★ Favorites", self._favorite_nodes())
+            fav_item = self._virtual_group_item("virtual:favorites", "Favorites", self._favorite_nodes())
             invisible.appendRow(fav_item)
 
         if self.view_mode in {"all", "recent"}:
-            recent_item = self._virtual_group_item("virtual:recent", "🕘 Recent", self._recent_nodes())
+            recent_item = self._virtual_group_item("virtual:recent", "Recent", self._recent_nodes())
             invisible.appendRow(recent_item)
 
         if self.view_mode == "all":

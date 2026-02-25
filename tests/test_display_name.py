@@ -3,7 +3,7 @@ import pytest
 pytest.importorskip("PyQt6")
 
 from launch_tree.domain import Node
-from launch_tree.model_qt import display_name_for_node
+from launch_tree.model_qt import VirtualNode, display_name_for_node
 
 
 def test_group_url_and_path_do_not_add_emoji_prefixes():
@@ -23,3 +23,11 @@ def test_group_url_and_path_do_not_add_emoji_prefixes():
 def test_separator_display_only():
     sep = Node(id="s", name="ignore", type="separator", target="", children=[])
     assert display_name_for_node(sep) == "—"
+
+
+def test_virtual_node_name_without_emoji_prefixes():
+    favorites = VirtualNode(node_id="virtual:favorites", name="Favorites", node_type="group")
+    recent = VirtualNode(node_id="virtual:recent", name="Recent", node_type="group")
+
+    assert display_name_for_node(favorites) == "Favorites"
+    assert display_name_for_node(recent) == "Recent"
